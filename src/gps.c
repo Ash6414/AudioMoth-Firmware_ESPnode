@@ -37,6 +37,8 @@
 
 /* Useful time constants */
 
+#define MICROSECONDS_IN_SECOND                  1000000
+#define MICROSECONDS_IN_MILLISECOND             1000
 #define MILLISECONDS_IN_SECOND                  1000
 
 /* RMC message parser results */
@@ -78,6 +80,8 @@ static volatile uint32_t currentTimerFrequency;
 static volatile uint32_t currentPPSTime;
 
 static volatile uint32_t currentPPSMilliSeconds;
+
+static volatile uint32_t currentPPSMicroSeconds;
 
 static volatile uint32_t currentRMCTime;
 
@@ -139,7 +143,9 @@ inline void GPSInterface_handleReceivedByte(uint8_t byte) {
 
 inline void GPSInterface_handlePulsePerSecond(uint32_t counter, uint32_t counterPeriod, uint32_t counterFrequency) {
 
-    GPS_handleGetTime((uint32_t*)&currentPPSTime, (uint32_t*)&currentPPSMilliSeconds);
+    GPS_handleGetTimeMicroseconds((uint32_t*)&currentPPSTime, (uint32_t*)&currentPPSMicroSeconds);
+
+    currentPPSMilliSeconds = currentPPSMicroSeconds / MICROSECONDS_IN_MILLISECOND;
 
     previousTimerCount = currentTimerCount;
 
@@ -165,13 +171,13 @@ inline void GPSInterface_handleTick() {
 
 void GPS_powerUpGPS() {
 
-    GPIO_PinModeSet(GPS_ENABLE_N_GPIOPORT, GPS_ENABLE_N_PIN, gpioModePushPull, 0);
+    GPIO_PinModeSet(GPS_ENABLE_N_GPIOPORT, GPS_ENABLE_N_PIN, gpioModePushPull, false);
 
 }
 
 void GPS_powerDownGPS() {
 
-    GPIO_PinModeSet(GPS_ENABLE_N_GPIOPORT, GPS_ENABLE_N_PIN, gpioModeDisabled, 0);
+    GPIO_PinModeSet(GPS_ENABLE_N_GPIOPORT, GPS_ENABLE_N_PIN, gpioModeDisabled, false);
 
 }
 
@@ -191,7 +197,7 @@ void GPS_enableMagneticSwitch() {
 
     /* Enable the pin */
         
-    GPIO_PinModeSet(MAGNETIC_SWITCH_GPIOPORT, MAGNETIC_SWITCH_PIN, gpioModeInputPull, 1);
+    GPIO_PinModeSet(MAGNETIC_SWITCH_GPIOPORT, MAGNETIC_SWITCH_PIN, gpioModeInputPullFilter, true);
 
     /* Enable interrupt on falling edge */
 
@@ -207,7 +213,7 @@ void GPS_disableMagneticSwitch() {
 
     /* Disable the pin */
 
-    GPIO_PinModeSet(MAGNETIC_SWITCH_GPIOPORT, MAGNETIC_SWITCH_PIN, gpioModeDisabled, 0);
+    GPIO_PinModeSet(MAGNETIC_SWITCH_GPIOPORT, MAGNETIC_SWITCH_PIN, gpioModeDisabled, false);
 
     /* Disable the interrupt */
 
@@ -296,7 +302,7 @@ GPS_fixResult_t GPS_setTimeFromGPS(uint32_t timeout) {
                 } else {
 
                     timeToBeSetOnNextPPS = 0;
-
+                    
                     validRMC = 0;
 
                 }
@@ -321,7 +327,7 @@ GPS_fixResult_t GPS_setTimeFromGPS(uint32_t timeout) {
 
                     /* Calculate clock difference and call handler */
 
-                    int64_t timeDifference = (int64_t)currentPPSTime * MILLISECONDS_IN_SECOND + (int64_t)currentPPSMilliSeconds - (int64_t)timeToBeSetOnNextPPS * MILLISECONDS_IN_SECOND;
+                    int64_t timeDifference = (int64_t)currentPPSTime * MICROSECONDS_IN_SECOND + (int64_t)currentPPSMicroSeconds - (int64_t)timeToBeSetOnNextPPS * MICROSECONDS_IN_SECOND;
 
                     /* Calculate the actual clock frequency */
 

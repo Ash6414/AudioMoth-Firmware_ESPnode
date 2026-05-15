@@ -13,7 +13,7 @@ extern void AudioConfig_handleAudioConfigurationEvent(AC_audioConfigurationEvent
 
 extern void AudioConfig_handleAudioConfigurationPacket(uint8_t *receiveBuffer, uint32_t size);
 
-void AudioConfig_enableAudioConfiguration(void);
+void AudioConfig_enableAudioConfiguration(bool ignoreExternalMicrophone);
 
 void AudioConfig_disableAudioConfiguration(void);
 
@@ -22,5 +22,7 @@ bool AudioConfig_listenForAudioConfigurationTone(uint32_t miliseconds);
 bool AudioConfig_listenForAudioConfigurationPackets(bool timeout, uint32_t milliseconds);
 
 void AudioConfig_cancelAudioConfiguration(void);
+
+void AudioConfig_handleMicrophoneChange(void);
 
 #endif /* __AUDIOCONFIG_H */

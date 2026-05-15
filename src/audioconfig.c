@@ -29,7 +29,6 @@
 #define MAXIMUM_NUMBER_OF_BYTES             23
 #define RECEIVE_BUFFER_SIZE_IN_BYTES        23
 
-#define CRC_POLY                            0x1021
 #define CRC_SIZE_IN_BYTES                   2
 
 #define ENCODED_BITS_IN_BYTE                14
@@ -68,6 +67,8 @@
 #define NUMBER_OF_START_BITS_TO_DETECT      10
 
 #define MAXIMUM_LISTENING_MILLISECONDS      60000
+
+#define RESTART_DELAY_MILLISECONDS          1000
 
 /* In period macro */
 
@@ -162,6 +163,8 @@ static float omegaT = 0.0f;
 
 static volatile bool cancel;
 
+static volatile bool restart;
+
 static volatile int16_t configSample;
 
 static volatile bool configSampleReady;
@@ -176,49 +179,32 @@ typedef enum {NONE, HIGH_BIT, LOW_BIT} receivedBit_t;
 
 /* CRC functions */
 
-static inline uint16_t updateCRC(uint16_t crc_in, int incr) {
+static uint16_t calculateCRC(uint8_t *address, uint32_t length) {
 
-    uint16_t xor = crc_in >> 15;
-    uint16_t out = crc_in << 1;
+    uint16_t crc = 0x0000;
 
-    if (incr) {
-        out++;
-    }
+    for (uint8_t *data = address; data < address + length; data += 1) {
 
-    if (xor) {
-        out ^= CRC_POLY;
-    }
+        crc  = (crc >> 8) | (crc << 8);
+        crc ^= *data;
+        crc ^= (crc & 0xFF) >> 4;
+        crc ^= crc << 12;
+        crc ^= (crc & 0xFF) << 5;
 
-    return out;
-
-}
-
-static inline uint16_t calculateCRC(const uint8_t *data, uint32_t size) {
-
-    uint16_t crc, i;
-
-    for (crc = 0; size > 0; size--, data++) {
-        for (i = 0x80; i; i >>= 1) {
-            crc = updateCRC(crc, *data & i);
-        }
-    }
-
-    for (i = 0; i < 16; i++) {
-        crc = updateCRC(crc, 0);
     }
 
     return crc;
 
 }
 
-static inline bool checkCRC(const uint8_t *data, uint32_t size) {
+static bool checkCRC(uint8_t *address, uint32_t length) {
 
-    uint16_t crc = calculateCRC(data, size - CRC_SIZE_IN_BYTES);
+    uint16_t crc = calculateCRC(address, length - CRC_SIZE_IN_BYTES);
 
     uint8_t low = crc & 0xFF;
     uint8_t high = crc >> 8;
 
-    return (low == data[size - 2] && high == data[size - 1]);
+    return (low == address[length - 2] && high == address[length - 1]);
 
 }
 
@@ -282,9 +268,15 @@ inline void AudioMoth_handleMicrophoneInterrupt(int16_t sample) {
 
 /* Functions to handle audio configuration */
 
-void AudioConfig_enableAudioConfiguration() {
+void AudioConfig_enableAudioConfiguration(bool ignoreExternalMicrophone) {
+
+    /* Initialise restart flag */
+
+    restart = false;
 
     /* Initialise microphone for configuration */
+
+    AudioMoth_ignoreExternalMicrophone(ignoreExternalMicrophone);
 
     AudioMoth_enableMicrophone(CONFIG_GAIN_RANGE, CONFIG_GAIN, CONFIG_CLOCK_DIVIDER, CONFIG_ACQUISITION_CYCLES, CONFIG_OVERSAMPLE_RATE);
 
@@ -350,49 +342,69 @@ bool AudioConfig_listenForAudioConfigurationTone(uint32_t milliseconds) {
 
     while (cancel == false && counter < maximumCounter) {
 
-        if (configSampleReady) {
+        while (restart == false && cancel == false && counter < maximumCounter) {
 
-            /* Update the Costas loop with new sample */
+            if (configSampleReady) {
 
-            float sample = (float)configSample;
+                /* Update the Costas loop with new sample */
 
-            if (hasInvertedOutput) sample = -sample;
+                float sample = (float)configSample;
 
-            float costasLoopOutput = updateCostasLoop(sample);
+                if (hasInvertedOutput) sample = -sample;
 
-            /* Check thresholds */
+                float costasLoopOutput = updateCostasLoop(sample);
 
-            if ((lastValue >= 0 && costasLoopOutput < 0) || (lastValue < 0 && costasLoopOutput >= 0)) {
+                /* Check thresholds */
 
-                uint32_t period = counter - lastCrossing;
+                if ((lastValue >= 0 && costasLoopOutput < 0) || (lastValue < 0 && costasLoopOutput >= 0)) {
 
-                receivedBit_t currentBit = IN_PERIOD(period, LOW_BIT_PERIOD, PERIOD_TOLERANCE) ? LOW_BIT : IN_PERIOD(period, HIGH_BIT_PERIOD, PERIOD_TOLERANCE) ? HIGH_BIT : NONE;
+                    uint32_t period = counter - lastCrossing;
 
-                if ((currentBit == LOW_BIT && lastBit == HIGH_BIT) || (currentBit == HIGH_BIT && lastBit == LOW_BIT)) {
+                    receivedBit_t currentBit = IN_PERIOD(period, LOW_BIT_PERIOD, PERIOD_TOLERANCE) ? LOW_BIT : IN_PERIOD(period, HIGH_BIT_PERIOD, PERIOD_TOLERANCE) ? HIGH_BIT : NONE;
 
-                    bitCount += 1;
+                    if ((currentBit == LOW_BIT && lastBit == HIGH_BIT) || (currentBit == HIGH_BIT && lastBit == LOW_BIT)) {
 
-                } else {
+                        bitCount += 1;
 
-                    bitCount = 0;
+                    } else {
+
+                        bitCount = 0;
+
+                    }
+
+                    if (bitCount == NUMBER_OF_START_BITS_TO_DETECT) return true;
+
+                    lastCrossing = counter;
+
+                    lastBit = currentBit;
 
                 }
 
-                if (bitCount == NUMBER_OF_START_BITS_TO_DETECT) return true;
+                /* Update counters and status */
 
-                lastCrossing = counter;
+                lastValue = costasLoopOutput;
 
-                lastBit = currentBit;
+                configSampleReady = false;
+
+                counter += 1;
 
             }
 
-            /* Update counters and status */
+        }
 
-            lastValue = costasLoopOutput;
+        if (restart) {
 
-            configSampleReady = false;
+            AudioMoth_disableMicrophone();
 
-            counter += 1;
+            AudioMoth_delay(RESTART_DELAY_MILLISECONDS);
+
+            AudioMoth_enableMicrophone(CONFIG_GAIN_RANGE, CONFIG_GAIN, CONFIG_CLOCK_DIVIDER, CONFIG_ACQUISITION_CYCLES, CONFIG_OVERSAMPLE_RATE);
+
+            AudioMoth_initialiseMicrophoneInterrupts();
+
+            AudioMoth_startMicrophoneSamples(CONFIG_SAMPLE_RATE);
+
+            restart = false;
 
         }
 
@@ -436,161 +448,45 @@ bool AudioConfig_listenForAudioConfigurationPackets(bool timeout, uint32_t milli
 
     while (cancel == false && (timeout == false || counter < maximumCounter)) {
 
-        if (configSampleReady) {
+        while (restart == false && cancel == false && (timeout == false || counter < maximumCounter)) {
 
-            /* Call pulse handler */
+            if (configSampleReady) {
 
-            if (counter % PULSE_INTERVAL == 0) AudioConfig_handleAudioConfigurationEvent(AC_EVENT_PULSE);
+                /* Call pulse handler */
 
-            /* Update the Costas loop with new sample */
+                if (counter % PULSE_INTERVAL == 0) AudioConfig_handleAudioConfigurationEvent(AC_EVENT_PULSE);
 
-            float costasLoopOutput = updateCostasLoop((float)configSample);
+                /* Update the Costas loop with new sample */
 
-            /* Check thresholds */
+                float costasLoopOutput = updateCostasLoop((float)configSample);
 
-            if ((lastValue >= 0 && costasLoopOutput < 0) || (lastValue < 0 && costasLoopOutput >= 0)) {
+                /* Check thresholds */
 
-                uint32_t period = counter - lastCrossing;
+                if ((lastValue >= 0 && costasLoopOutput < 0) || (lastValue < 0 && costasLoopOutput >= 0)) {
 
-                if (state == IDLE) {
+                    uint32_t period = counter - lastCrossing;
 
-                    if (IN_PERIOD(period, START_STOP_BIT_PERIOD, PERIOD_TOLERANCE)) {
+                    if (state == IDLE) {
 
-                        state = START_BITS;
+                        if (IN_PERIOD(period, START_STOP_BIT_PERIOD, PERIOD_TOLERANCE)) {
 
-                        bitCount = 0;
-
-                    }
-
-                } else if (state == START_BITS) {
-
-                    if (IN_PERIOD(period, START_STOP_BIT_PERIOD, PERIOD_TOLERANCE)) {
-
-                        bitCount += 1;
-
-                    } else if (IN_PERIOD(period, LOW_BIT_PERIOD, PERIOD_TOLERANCE) || IN_PERIOD(period, HIGH_BIT_PERIOD, PERIOD_TOLERANCE)) {
-
-                        if (bitCount > MIN_NUMBER_OF_START_STOP_PERIODS && bitCount < MAX_NUMBER_OF_START_STOP_PERIODS) {
-
-                            AudioConfig_handleAudioConfigurationEvent(AC_EVENT_START);
-
-                            receivedHammingCodes[0] = 0;
-
-                            receivedHammingCodes[1] = 0;
-
-                            receivedByte = 0;
-
-                            state = DATA_BITS;
-
-                            byteCount = 0;
+                            state = START_BITS;
 
                             bitCount = 0;
 
-                        } else {
-
-                            state = IDLE;
-
                         }
 
-                    } else {
+                    } else if (state == START_BITS) {
 
-                        state = IDLE;
+                        if (IN_PERIOD(period, START_STOP_BIT_PERIOD, PERIOD_TOLERANCE)) {
 
-                    }
+                            bitCount += 1;
 
-                }
+                        } else if (IN_PERIOD(period, LOW_BIT_PERIOD, PERIOD_TOLERANCE) || IN_PERIOD(period, HIGH_BIT_PERIOD, PERIOD_TOLERANCE)) {
 
-                if (state == DATA_BITS || state == DATA_OR_STOP_BITS) {
+                            if (bitCount > MIN_NUMBER_OF_START_STOP_PERIODS && bitCount < MAX_NUMBER_OF_START_STOP_PERIODS) {
 
-                    if (period > MIN_BIT_PERIOD && period < MAX_BIT_PERIOD) {
-
-                        /* Determine the received bit */
-
-                        if (period > MID_BIT_PERIOD) {
-
-                            if (USE_HAMMING_CODE) {
-
-                                uint8_t mask = 1 << (bitCount >> 1);
-
-                                receivedHammingCodes[bitCount % 2] |= mask;
-
-                            } else {
-
-                                uint8_t mask = 1 << bitCount;
-
-                                receivedByte |= mask;
-
-                            }
-
-                        }
-
-                        bitCount += 1;
-
-                        /* Check if this could still be a stop bit */
-
-                        if (!IN_PERIOD(period, START_STOP_BIT_PERIOD, PERIOD_TOLERANCE)) {
-
-                            state = DATA_BITS;
-
-                        }
-
-                        /* Check if stop condition met */
-
-                        if (bitCount == MIN_NUMBER_OF_START_STOP_PERIODS && state == DATA_OR_STOP_BITS && byteCount > CRC_SIZE_IN_BYTES) {
-
-                            if (checkCRC(receivedBytes, byteCount)) {
-
-                                AudioConfig_handleAudioConfigurationPacket(receivedBytes, byteCount - CRC_SIZE_IN_BYTES);
-
-                            } else {
-
-                                AudioConfig_handleAudioConfigurationEvent(AC_EVENT_CRC_ERROR);
-
-                            }
-
-                            state = IDLE;
-
-                        }
-
-                        /* Check if full byte has been received */
-
-                        uint32_t requiredNumberOfBits = USE_HAMMING_CODE ? ENCODED_BITS_IN_BYTE : BITS_IN_BYTE;
-
-                        if (bitCount == requiredNumberOfBits) {
-
-                            if (USE_HAMMING_CODE) {
-
-                                receivedBytes[byteCount] = hammingConversion[receivedHammingCodes[1]] << 4;
-
-                                receivedBytes[byteCount] |= hammingConversion[receivedHammingCodes[0]];
-
-                            } else {
-
-                                receivedBytes[byteCount] = receivedByte;
-
-                            }
-
-                            byteCount += 1;
-
-                            /* Check the CRC if all bytes have been received */
-
-                            if (byteCount == MAXIMUM_NUMBER_OF_BYTES) {
-
-                                if (checkCRC(receivedBytes, MAXIMUM_NUMBER_OF_BYTES)) {
-
-                                    AudioConfig_handleAudioConfigurationPacket(receivedBytes, MAXIMUM_NUMBER_OF_BYTES - CRC_SIZE_IN_BYTES);
-
-                                } else {
-
-                                     AudioConfig_handleAudioConfigurationEvent(AC_EVENT_CRC_ERROR);
-
-                                }
-
-                                state = IDLE;
-
-                            } else {
-
-                                AudioConfig_handleAudioConfigurationEvent(AC_EVENT_BYTE);
+                                AudioConfig_handleAudioConfigurationEvent(AC_EVENT_START);
 
                                 receivedHammingCodes[0] = 0;
 
@@ -598,35 +494,171 @@ bool AudioConfig_listenForAudioConfigurationPackets(bool timeout, uint32_t milli
 
                                 receivedByte = 0;
 
-                                state = DATA_OR_STOP_BITS;
+                                state = DATA_BITS;
+
+                                byteCount = 0;
 
                                 bitCount = 0;
 
+                            } else {
+
+                                state = IDLE;
+
                             }
+
+                        } else {
+
+                            state = IDLE;
 
                         }
 
-                    } else {
+                    }
 
-                        AudioConfig_handleAudioConfigurationEvent(AC_EVENT_BIT_ERROR);
+                    if (state == DATA_BITS || state == DATA_OR_STOP_BITS) {
 
-                        state = IDLE;
+                        if (period > MIN_BIT_PERIOD && period < MAX_BIT_PERIOD) {
+
+                            /* Determine the received bit */
+
+                            if (period > MID_BIT_PERIOD) {
+
+                                if (USE_HAMMING_CODE) {
+
+                                    uint8_t mask = 1 << (bitCount >> 1);
+
+                                    receivedHammingCodes[bitCount % 2] |= mask;
+
+                                } else {
+
+                                    uint8_t mask = 1 << bitCount;
+
+                                    receivedByte |= mask;
+
+                                }
+
+                            }
+
+                            bitCount += 1;
+
+                            /* Check if this could still be a stop bit */
+
+                            if (!IN_PERIOD(period, START_STOP_BIT_PERIOD, PERIOD_TOLERANCE)) {
+
+                                state = DATA_BITS;
+
+                            }
+
+                            /* Check if stop condition met */
+
+                            if (bitCount == MIN_NUMBER_OF_START_STOP_PERIODS && state == DATA_OR_STOP_BITS && byteCount > CRC_SIZE_IN_BYTES) {
+
+                                if (checkCRC(receivedBytes, byteCount)) {
+
+                                    AudioConfig_handleAudioConfigurationPacket(receivedBytes, byteCount - CRC_SIZE_IN_BYTES);
+
+                                } else {
+
+                                    AudioConfig_handleAudioConfigurationEvent(AC_EVENT_CRC_ERROR);
+
+                                }
+
+                                state = IDLE;
+
+                            }
+
+                            /* Check if full byte has been received */
+
+                            uint32_t requiredNumberOfBits = USE_HAMMING_CODE ? ENCODED_BITS_IN_BYTE : BITS_IN_BYTE;
+
+                            if (bitCount == requiredNumberOfBits) {
+
+                                if (USE_HAMMING_CODE) {
+
+                                    receivedBytes[byteCount] = hammingConversion[receivedHammingCodes[1]] << 4;
+
+                                    receivedBytes[byteCount] |= hammingConversion[receivedHammingCodes[0]];
+
+                                } else {
+
+                                    receivedBytes[byteCount] = receivedByte;
+
+                                }
+
+                                byteCount += 1;
+
+                                /* Check the CRC if all bytes have been received */
+
+                                if (byteCount == MAXIMUM_NUMBER_OF_BYTES) {
+
+                                    if (checkCRC(receivedBytes, MAXIMUM_NUMBER_OF_BYTES)) {
+
+                                        AudioConfig_handleAudioConfigurationPacket(receivedBytes, MAXIMUM_NUMBER_OF_BYTES - CRC_SIZE_IN_BYTES);
+
+                                    } else {
+
+                                        AudioConfig_handleAudioConfigurationEvent(AC_EVENT_CRC_ERROR);
+
+                                    }
+
+                                    state = IDLE;
+
+                                } else {
+
+                                    AudioConfig_handleAudioConfigurationEvent(AC_EVENT_BYTE);
+
+                                    receivedHammingCodes[0] = 0;
+
+                                    receivedHammingCodes[1] = 0;
+
+                                    receivedByte = 0;
+
+                                    state = DATA_OR_STOP_BITS;
+
+                                    bitCount = 0;
+
+                                }
+
+                            }
+
+                        } else {
+
+                            AudioConfig_handleAudioConfigurationEvent(AC_EVENT_BIT_ERROR);
+
+                            state = IDLE;
+
+                        }
 
                     }
 
+                    lastCrossing = counter;
+
                 }
 
-                lastCrossing = counter;
+                /* Update counters and status */
+
+                lastValue = costasLoopOutput;
+
+                configSampleReady = false;
+
+                counter += 1;
 
             }
 
-            /* Update counters and status */
+        }
 
-            lastValue = costasLoopOutput;
+        if (restart) {
 
-            configSampleReady = false;
+            AudioMoth_disableMicrophone();
 
-            counter += 1;
+            AudioMoth_delay(RESTART_DELAY_MILLISECONDS);
+
+            AudioMoth_enableMicrophone(CONFIG_GAIN_RANGE, CONFIG_GAIN, CONFIG_CLOCK_DIVIDER, CONFIG_ACQUISITION_CYCLES, CONFIG_OVERSAMPLE_RATE);
+
+            AudioMoth_initialiseMicrophoneInterrupts();
+
+            AudioMoth_startMicrophoneSamples(CONFIG_SAMPLE_RATE);
+
+            restart = false;
 
         }
 
@@ -641,5 +673,13 @@ bool AudioConfig_listenForAudioConfigurationPackets(bool timeout, uint32_t milli
 void AudioConfig_cancelAudioConfiguration() {
 
     cancel = true;
+
+}
+
+/* Handle microphone change */
+
+void AudioConfig_handleMicrophoneChange() {
+
+    restart = true;
 
 }

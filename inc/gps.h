@@ -50,6 +50,8 @@ extern void GPS_handleSetTime(uint32_t time, uint32_t milliseconds, int64_t time
 
 extern void GPS_handleGetTime(uint32_t *time, uint32_t *milliseconds);
 
+extern void GPS_handleGetTimeMicroseconds(uint32_t *time, uint32_t *microseconds);
+
 /* External interrupt handlers */
 
 extern void GPS_handleTickEvent();
