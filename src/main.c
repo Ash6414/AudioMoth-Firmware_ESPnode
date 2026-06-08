@@ -1844,7 +1844,7 @@ int main(void) {
 
             /* Determine if acoustic configuration is required */
 
-            bool shouldPerformAcousticConfiguration = switchPosition == AM_SWITCH_CUSTOM && (AudioMoth_hasTimeBeenSet() == false || configSettings->requireAcousticConfiguration);
+            bool shouldPerformAcousticConfiguration = switchPosition == AM_SWITCH_CUSTOM && configSettings->requireAcousticConfiguration;
 
             /* Overrule this decision if setting of time from GPS is enabled and acoustic configuration not enforced. Also set GPS time setting flag */
 
