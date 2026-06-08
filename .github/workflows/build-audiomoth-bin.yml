@@ -15,6 +15,20 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: firmware
+          ref: master
+          fetch-depth: 1
+
+      - name: Show exact fork source being built
+        run: |
+          echo "Repository: Ash6414/AudioMoth-Firmware_ESPnode"
+          echo "Branch: master"
+          echo "Commit: $(git -C firmware rev-parse HEAD)"
+          echo "espbridge.c busy implementation:"
+          grep -n "ESPBridge_setBusy" -A8 firmware/src/espbridge.c
+          if grep -R "GPIO_PinOutWrite" -n firmware/src firmware/inc; then
+            echo "ERROR: fork source still contains GPIO_PinOutWrite"
+            exit 1
+          fi
 
       - name: Install ARM toolchain and build tools
         run: |
@@ -23,15 +37,21 @@ jobs:
 
       - name: Clone AudioMoth-Project build framework
         run: |
-          git clone https://github.com/OpenAcousticDevices/AudioMoth-Project.git project
+          git clone --depth 1 https://github.com/OpenAcousticDevices/AudioMoth-Project.git project
 
-      - name: Copy ESPnode firmware into AudioMoth-Project
+      - name: Copy fork source into AudioMoth-Project without editing it
         run: |
-          cp firmware/src/main.c project/src/main.c
-          cp firmware/src/*.c project/src/
-          cp firmware/inc/*.h project/inc/
+          cp -f firmware/src/main.c project/src/main.c
+          cp -f firmware/src/*.c project/src/
+          cp -f firmware/inc/*.h project/inc/
+          echo "Build-tree espbridge.c busy implementation:"
+          grep -n "ESPBridge_setBusy" -A8 project/src/espbridge.c
+          if grep -R "GPIO_PinOutWrite" -n project/src project/inc; then
+            echo "ERROR: build tree source still contains GPIO_PinOutWrite"
+            exit 1
+          fi
 
-      - name: Patch Makefile for GitHub Actions toolchain and GPS sources
+      - name: Configure AudioMoth-Project Makefile for CI only
         run: |
           sed -i 's|^TOOLCHAIN_PATH =.*|TOOLCHAIN_PATH = /usr|' project/build/Makefile
           sed -i 's|^TOOLCHAIN_VERSION =.*|TOOLCHAIN_VERSION = |' project/build/Makefile
