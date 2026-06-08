@@ -1,4 +1,4 @@
-# AudioMoth-Firmware-Basic
+# AudioMoth-Firmware-EspNode
 
 Firmware for AudioMoth devices, used in conjunction with the AudioMoth-Project framework, to produce the standard AudioMoth releases.
 
