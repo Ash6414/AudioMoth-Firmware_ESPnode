@@ -1,0 +1,69 @@
+name: Patch firmware identity once
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/patch-firmware-identity-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-main-c:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch src/main.c firmware identity
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("src/main.c")
+          text = path.read_text()
+
+          text2, n_version = re.subn(
+              r'static uint8_t firmwareVersion\[AM_FIRMWARE_VERSION_LENGTH\]\s*=\s*\{[^}]+\};',
+              'static uint8_t firmwareVersion[AM_FIRMWARE_VERSION_LENGTH] = {1, 12, 0};',
+              text,
+              count=1,
+          )
+
+          text3, n_desc = re.subn(
+              r'static uint8_t firmwareDescription\[AM_FIRMWARE_DESCRIPTION_LENGTH\]\s*=\s*"[^"]+";',
+              'static uint8_t firmwareDescription[AM_FIRMWARE_DESCRIPTION_LENGTH] = "AudioMoth-Firmware-Basic";',
+              text2,
+              count=1,
+          )
+
+          if n_version != 1 or n_desc != 1:
+              raise SystemExit(f"Expected to patch exactly one version and one description, patched version={n_version}, description={n_desc}")
+
+          path.write_text(text3)
+          PY
+
+      - name: Commit src/main.c if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "Patched identity lines:"
+          grep -n "static uint8_t firmwareVersion\|static uint8_t firmwareDescription" -A2 -B2 src/main.c
+
+          if git diff --quiet -- src/main.c; then
+            echo "src/main.c already had the requested firmware identity. No commit needed."
+            exit 0
+          fi
+
+          git add src/main.c
+          git commit -m "Set firmware identity to AudioMoth Basic"
+          git push origin master
