@@ -69,6 +69,14 @@ static uint8_t chunkBuffer[ESPBRIDGE_CHUNK_BYTES];
 
 /* ---------------- UART primitives ---------------- */
 
+static inline void gpioWrite(GPIO_Port_TypeDef port, unsigned int pin, bool value) {
+    if (value) {
+        GPIO_PinOutSet(port, pin);
+    } else {
+        GPIO_PinOutClear(port, pin);
+    }
+}
+
 static inline bool uartRxAvailable(void) {
     return (USART_StatusGet(BRIDGE_UART) & USART_STATUS_RXDATAV) != 0;
 }
@@ -380,7 +388,7 @@ void ESPBridge_init(void) {
 
 void ESPBridge_setBusy(bool busy) {
     bridgeBusy = busy;
-    GPIO_PinOutWrite(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, busy ? 1 : 0);
+    gpioWrite(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, busy);
 }
 
 void ESPBridge_setUploadAllowed(bool allowed) {
