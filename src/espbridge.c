@@ -398,6 +398,12 @@ void ESPBridge_init(void) {
 void ESPBridge_setBusy(bool busy) {
     bridgeBusy = busy;
     gpioWrite(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, busy);
+
+    if (!busy && ESPBridge_isRequestActive() && !serviceActive) {
+        uint32_t now, ms;
+        AudioMoth_getTime(&now, &ms);
+        ESPBridge_serviceUntil(now + 1);
+    }
 }
 
 void ESPBridge_setUploadAllowed(bool allowed) {
