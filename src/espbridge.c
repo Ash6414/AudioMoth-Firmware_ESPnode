@@ -381,12 +381,15 @@ void ESPBridge_init(void) {
     CMU_ClockEnable(cmuClock_GPIO, true);
     CMU_ClockEnable(BRIDGE_UART_CLOCK, true);
 
+    USART_Reset(BRIDGE_UART);
+
     GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
     GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
     GPIO_PinModeSet(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, gpioModePushPull, 1);
     GPIO_PinModeSet(BRIDGE_REQ_PORT, BRIDGE_REQ_PIN, gpioModeInputPull, 0);
 
     USART_InitAsync_TypeDef init = USART_INITASYNC_DEFAULT;
+    init.enable = usartDisable;
     init.baudrate = ESPBRIDGE_DEFAULT_BAUD;
     init.oversampling = usartOVS4;
     USART_InitAsync(BRIDGE_UART, &init);
@@ -394,6 +397,8 @@ void ESPBridge_init(void) {
     BRIDGE_UART->ROUTE = UART_ROUTE_TXPEN |
                          UART_ROUTE_RXPEN |
                          BRIDGE_UART_LOCATION;
+
+    USART_Enable(BRIDGE_UART, usartEnable);
 
     bridgeBusy = true;
     uploadAllowed = false;
