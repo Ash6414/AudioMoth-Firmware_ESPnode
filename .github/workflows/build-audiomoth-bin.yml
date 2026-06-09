@@ -13,11 +13,13 @@ on:
     paths:
       - 'src/**'
       - 'inc/**'
+      - 'tools/**'
       - '.github/workflows/build-audiomoth-bin.yml'
   pull_request:
     paths:
       - 'src/**'
       - 'inc/**'
+      - 'tools/**'
       - '.github/workflows/build-audiomoth-bin.yml'
 
 permissions:
@@ -61,6 +63,7 @@ jobs:
             firmware/inc/audioconfig.h
             firmware/inc/digitalfilter.h
             firmware/inc/gps.h
+            firmware/tools/apply-espbridge-request-service.py
           )
 
           for file in "${required_files[@]}"; do
@@ -111,6 +114,14 @@ jobs:
           grep -n 'ESPBRIDGE_DEFAULT_BAUD' project/inc/espbridge.h
           grep -n 'OK BRIDGE_READY\|OK PONG\|OK DONE' project/src/espbridge.c
 
+      - name: Apply ESP request service patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 firmware/tools/apply-espbridge-request-service.py
+          grep -n 'ESP32 request service' project/src/main.c
+          grep -n 'uploadServiceAllowed' project/src/main.c
+
       - name: Configure AudioMoth Makefile for CI
         shell: bash
         run: |
@@ -159,6 +170,7 @@ jobs:
             echo "firmware_description=AudioMoth-Firmware-Basic"
             echo "firmware_version=1.12.0"
             echo "espbridge_baud=9600"
+            echo "espbridge_request_service=active_request_gets_uart_window"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt
 
