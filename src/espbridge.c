@@ -38,6 +38,9 @@
 #define BRIDGE_REQ_PORT                     gpioPortA    /* a7, ESP output to AudioMoth */
 #define BRIDGE_REQ_PIN                      7
 
+/* Prototype mode: do not let a PA7 read issue prevent UART service from running. */
+#define BRIDGE_REQUIRE_REQ_PIN              0
+
 #define RX_LINE_TIMEOUT_MS                  250
 #define SERVICE_IDLE_TIMEOUT_MS             3000
 #define SERVICE_MAX_WINDOW_MS               30000
@@ -59,6 +62,10 @@ static inline void gpioWrite(GPIO_Port_TypeDef port, unsigned int pin, bool valu
     } else {
         GPIO_PinOutClear(port, pin);
     }
+}
+
+static inline bool rawRequestPinActive(void) {
+    return GPIO_PinInGet(BRIDGE_REQ_PORT, BRIDGE_REQ_PIN) != 0;
 }
 
 static inline bool uartRxAvailable(void) {
@@ -343,10 +350,11 @@ static void commandTime(char *args) {
 static void commandStatus(uint32_t deadlineUnixSeconds) {
     uint32_t now, ms;
     AudioMoth_getTime(&now, &ms);
-    sendLine("OK STATUS busy=%u allowed=%u req=%u now=%lu ms=%lu deadline=%lu",
+    sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu",
              bridgeBusy ? 1 : 0,
              uploadAllowed ? 1 : 0,
              ESPBridge_isRequestActive() ? 1 : 0,
+             rawRequestPinActive() ? 1 : 0,
              (unsigned long)now,
              (unsigned long)ms,
              (unsigned long)deadlineUnixSeconds);
@@ -416,7 +424,11 @@ void ESPBridge_setUploadAllowed(bool allowed) {
 }
 
 bool ESPBridge_isRequestActive(void) {
-    return GPIO_PinInGet(BRIDGE_REQ_PORT, BRIDGE_REQ_PIN) != 0;
+#if BRIDGE_REQUIRE_REQ_PIN
+    return rawRequestPinActive();
+#else
+    return true;
+#endif
 }
 
 void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
