@@ -2,9 +2,19 @@ name: Build AudioMoth firmware bin
 
 on:
   workflow_dispatch:
+    inputs:
+      audiomoth_project_ref:
+        description: AudioMoth-Project branch or tag to use as the build framework
+        required: false
+        default: master
   push:
     branches:
       - master
+    paths:
+      - 'src/**'
+      - 'inc/**'
+      - '.github/workflows/build-audiomoth-bin.yml'
+  pull_request:
     paths:
       - 'src/**'
       - 'inc/**'
@@ -17,30 +27,54 @@ concurrency:
   group: audiomoth-firmware-build-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  AUDIOMOTH_PROJECT_REF: ${{ github.event.inputs.audiomoth_project_ref || 'master' }}
+
 jobs:
   build-bin:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out firmware source
+      - name: Check out firmware source at workflow ref
         uses: actions/checkout@v4
         with:
           path: firmware
-          ref: master
           fetch-depth: 1
 
-      - name: Show source revision
+      - name: Show and validate source revision
+        shell: bash
         run: |
           set -euo pipefail
-          echo "Repository: Ash6414/AudioMoth-Firmware_ESPnode"
-          echo "Branch: master"
+          echo "Repository: ${GITHUB_REPOSITORY}"
+          echo "Workflow ref: ${GITHUB_REF}"
+          echo "Ref name: ${GITHUB_REF_NAME}"
           echo "Commit: $(git -C firmware rev-parse HEAD)"
-          test -f firmware/src/main.c
-          test -f firmware/src/espbridge.c
-          grep -n "ESP_TIME_WAIT_TIMEOUT_MS" firmware/src/main.c
-          grep -n "ESPBridge_serviceUntil" -A3 firmware/src/espbridge.c
+          echo "AudioMoth-Project ref: ${AUDIOMOTH_PROJECT_REF}"
 
-      - name: Install ARM GCC and newlib
+          required_files=(
+            firmware/src/main.c
+            firmware/src/espbridge.c
+            firmware/src/audioconfig.c
+            firmware/src/digitalfilter.c
+            firmware/src/gps.c
+            firmware/inc/espbridge.h
+            firmware/inc/audioconfig.h
+            firmware/inc/digitalfilter.h
+            firmware/inc/gps.h
+          )
+
+          for file in "${required_files[@]}"; do
+            test -f "$file" || { echo "Missing required firmware file: $file" >&2; exit 1; }
+          done
+
+          grep -F 'static uint8_t firmwareVersion[AM_FIRMWARE_VERSION_LENGTH] = {1, 12, 0};' firmware/src/main.c
+          grep -F 'static uint8_t firmwareDescription[AM_FIRMWARE_DESCRIPTION_LENGTH] = "AudioMoth-Firmware-Basic";' firmware/src/main.c
+          grep -F '#define ESPBRIDGE_DEFAULT_BAUD              115200' firmware/inc/espbridge.h
+          grep -F 'sendLine("OK BRIDGE_READY")' firmware/src/espbridge.c
+          grep -F 'sendLine("OK PONG")' firmware/src/espbridge.c
+
+      - name: Install ARM GCC and build tools
+        shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -49,53 +83,85 @@ jobs:
             make \
             gcc-arm-none-eabi \
             binutils-arm-none-eabi \
-            libnewlib-dev \
             libnewlib-arm-none-eabi
           arm-none-eabi-gcc --version
-          printf '#include <time.h>\nint main(void){return 0;}\n' | arm-none-eabi-gcc -x c -E - >/dev/null
+          arm-none-eabi-objcopy --version
 
       - name: Clone AudioMoth build framework
+        shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/OpenAcousticDevices/AudioMoth-Project.git project
+          git clone --depth 1 --branch "${AUDIOMOTH_PROJECT_REF}" https://github.com/OpenAcousticDevices/AudioMoth-Project.git project
+          echo "AudioMoth-Project commit: $(git -C project rev-parse HEAD)"
+          test -f project/build/Makefile
+          test -f project/build/audiomoth.ld
 
-      - name: Overlay repository files into build framework
+      - name: Overlay this repository into AudioMoth-Project
+        shell: bash
         run: |
           set -euo pipefail
-          cp -f firmware/src/*.c project/src/
-          if [ -d firmware/inc ]; then
-            cp -f firmware/inc/*.h project/inc/
-          fi
-          echo "Build-tree bridge guard:"
-          grep -n "ESPBridge_serviceUntil" -A3 project/src/espbridge.c
-          echo "Build-tree time-wait constants:"
-          grep -n "ESP_TIME_WAIT_TIMEOUT_MS" project/src/main.c
+          find firmware/src -maxdepth 1 -type f -name '*.c' -print -exec cp -f {} project/src/ \;
+          find firmware/inc -maxdepth 1 -type f -name '*.h' -print -exec cp -f {} project/inc/ \;
+
+          cmp -s firmware/src/main.c project/src/main.c
+          cmp -s firmware/src/espbridge.c project/src/espbridge.c
+          cmp -s firmware/inc/espbridge.h project/inc/espbridge.h
+
+          echo "Overlay bridge snippets:"
+          grep -n 'ESPBRIDGE_DEFAULT_BAUD' project/inc/espbridge.h
+          grep -n 'OK BRIDGE_READY\|OK PONG\|OK DONE' project/src/espbridge.c
 
       - name: Configure AudioMoth Makefile for CI
+        shell: bash
         run: |
           set -euo pipefail
-          sed -i 's|^TOOLCHAIN_PATH =.*|TOOLCHAIN_PATH = /usr|' project/build/Makefile
-          sed -i 's|^TOOLCHAIN_VERSION =.*|TOOLCHAIN_VERSION = |' project/build/Makefile
-          sed -i 's|^INC =.*|INC = ../cmsis ../device/inc ../emlib/inc ../emusb/inc ../drivers/inc ../fatfs/inc ../gps/inc ../inc|' project/build/Makefile
-          sed -i 's|^SRC =.*|SRC = ../device/src ../emlib/src ../emusb/src ../drivers/src ../fatfs/src ../gps/src ../src|' project/build/Makefile
-          grep -n "^TOOLCHAIN_PATH\|^TOOLCHAIN_VERSION\|^INC =\|^SRC =" project/build/Makefile
+          makefile=project/build/Makefile
+          sed -i 's|^TOOLCHAIN_PATH =.*|TOOLCHAIN_PATH = /usr|' "$makefile"
+          sed -i 's|^TOOLCHAIN_VERSION =.*|TOOLCHAIN_VERSION = |' "$makefile"
+          sed -i 's|^INC =.*|INC = ../cmsis ../device/inc ../emlib/inc ../emusb/inc ../drivers/inc ../fatfs/inc ../gps/inc ../inc|' "$makefile"
+          sed -i 's|^SRC =.*|SRC = ../device/src ../emlib/src ../emusb/src ../drivers/src ../fatfs/src ../gps/src ../src|' "$makefile"
+          grep -n '^TOOLCHAIN_PATH\|^TOOLCHAIN_VERSION\|^INC =\|^SRC =' "$makefile"
 
       - name: Build firmware binary
+        shell: bash
         working-directory: project/build
         run: |
           set -euo pipefail
           make clean
-          make audiomoth.bin
+          make -j"$(nproc)" audiomoth.bin
 
-      - name: Verify binary output
+      - name: Verify binary and collect artifacts
+        shell: bash
         run: |
           set -euo pipefail
           test -s project/build/audiomoth.bin
+          test -s project/build/audiomoth.hex
+          test -s project/build/audiomoth.map
+          test -s project/build/audiomoth.lst
+
+          strings project/build/audiomoth.bin | grep -F 'AudioMoth-Firmware-Basic'
+          strings project/build/audiomoth.bin | grep -F 'OK BRIDGE_READY'
+          strings project/build/audiomoth.bin | grep -F 'OK PONG'
+
           mkdir -p firmware-artifacts
           cp -f project/build/audiomoth.bin firmware-artifacts/audiomoth.bin
           cp -f project/build/audiomoth.hex firmware-artifacts/audiomoth.hex
           cp -f project/build/audiomoth.map firmware-artifacts/audiomoth.map
           cp -f project/build/audiomoth.lst firmware-artifacts/audiomoth.lst
+
+          {
+            echo "source_repository=${GITHUB_REPOSITORY}"
+            echo "source_ref=${GITHUB_REF}"
+            echo "source_ref_name=${GITHUB_REF_NAME}"
+            echo "source_sha=$(git -C firmware rev-parse HEAD)"
+            echo "audiomoth_project_ref=${AUDIOMOTH_PROJECT_REF}"
+            echo "audiomoth_project_sha=$(git -C project rev-parse HEAD)"
+            echo "firmware_description=AudioMoth-Firmware-Basic"
+            echo "firmware_version=1.12.0"
+            echo "espbridge_baud=115200"
+            date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
+          } > firmware-artifacts/build-info.txt
+
           ls -lh firmware-artifacts/
 
       - name: Upload firmware artifact
