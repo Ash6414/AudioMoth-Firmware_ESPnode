@@ -1,0 +1,234 @@
+name: Patch ESP time wait once
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/patch-esp-time-wait-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-esp-time-wait:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch AudioMoth ESP time-wait behavior
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          main_path = Path("src/main.c")
+          bridge_path = Path("src/espbridge.c")
+
+          main = main_path.read_text()
+          bridge = bridge_path.read_text()
+
+          # ------------------------------------------------------------------
+          # 1) src/espbridge.c: allow PING/STATUS/TIME/DONE service even when
+          # uploadAllowed is false. LIST/GET already reject when uploadAllowed
+          # is false. Patch DELETE to do the same.
+          # ------------------------------------------------------------------
+          old_delete_pattern = re.compile(
+              r'static void commandDelete\(char \*args\) \{.*?\n\}\n\nstatic void commandTime',
+              re.S,
+          )
+
+          new_delete = '''static void commandDelete(char *args) {
+    char path[ESPBRIDGE_MAX_PATH];
+
+    if (bridgeBusy || !uploadAllowed) {
+        sendLine("ERR BUSY upload_not_allowed");
+        return;
+    }
+
+    if (sscanf(args, "%95s", path) != 1) {
+        sendLine("ERR ARG usage_DELETE_path");
+        return;
+    }
+
+    if (!validPath(path, true)) {
+        sendLine("ERR PATH invalid_path");
+        return;
+    }
+
+    if (!ensureFilesystem()) {
+        sendLine("ERR SD filesystem_enable_failed");
+        return;
+    }
+
+    FRESULT res = f_unlink(path);
+
+    if (res == FR_OK) {
+        sendLine("OK DELETE %s", path);
+    } else {
+        sendLine("ERR DELETE %u", (unsigned int)res);
+    }
+}
+
+static void commandTime'''
+
+          bridge2, delete_count = old_delete_pattern.subn(new_delete, bridge, count=1)
+          if delete_count != 1:
+              raise SystemExit(f"Failed to patch commandDelete; patched {delete_count} instances")
+
+          old_service_guard = """void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
+    if (bridgeBusy || !uploadAllowed) return;
+    if (deadlineReached(deadlineUnixSeconds)) return;"""
+
+          new_service_guard = """void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
+    if (bridgeBusy) return;
+    if (deadlineReached(deadlineUnixSeconds)) return;"""
+
+          if old_service_guard not in bridge2 and new_service_guard not in bridge2:
+              raise SystemExit("Could not find ESPBridge_serviceUntil guard")
+          bridge2 = bridge2.replace(old_service_guard, new_service_guard, 1)
+
+          # ------------------------------------------------------------------
+          # 2) src/main.c: define ESP time-wait constants.
+          # ------------------------------------------------------------------
+          if "ESP_TIME_WAIT_TIMEOUT_MS" not in main:
+              anchor = "#define USB_CONFIGURATION_BLINK                 400"
+              replacement = anchor + "\n\n#define ESP_TIME_WAIT_TIMEOUT_MS              60000\n#define ESP_TIME_WAIT_STEP_MS                 50\n#define ESP_TIME_SERVICE_WINDOW_SECONDS       2"
+              if anchor not in main:
+                  raise SystemExit("Could not find USB_CONFIGURATION_BLINK anchor")
+              main = main.replace(anchor, replacement, 1)
+
+          # ------------------------------------------------------------------
+          # 3) src/main.c: when time is unset in CUSTOM, wait for ESP32 TIME
+          # instead of falling into acoustic configuration.
+          # ------------------------------------------------------------------
+          if "ESP32 time-setting path" not in main:
+              read_time_block = """    /* Read the time */
+
+    uint32_t currentTime;
+
+    uint32_t currentMilliseconds;
+
+    AudioMoth_getTime(&currentTime, &currentMilliseconds);
+
+    /* Check if switch has just been moved to CUSTOM or DEFAULT */"""
+
+              esp_time_block = """    /* Read the time */
+
+    uint32_t currentTime;
+
+    uint32_t currentMilliseconds;
+
+    AudioMoth_getTime(&currentTime, &currentMilliseconds);
+
+    /* ESP32 time-setting path.
+     *
+     * In ESP-node deployments, the ESP32 gets server time and sends TIME over
+     * UART. Do not fall into the stock acoustic chime configuration path just
+     * because the AudioMoth RTC is unset after flashing or power loss.
+     *
+     * File upload remains disabled here. Only non-file bridge commands should
+     * be useful here: PING, STATUS, TIME, DONE. LIST, GET, and DELETE are
+     * rejected because uploadAllowed is false.
+     */
+
+    if (switchPosition == AM_SWITCH_CUSTOM && AudioMoth_hasTimeBeenSet() == false) {
+
+        uint32_t waitedMilliseconds = 0;
+
+        ESPBridge_setBusy(false);
+        ESPBridge_setUploadAllowed(false);
+
+        while (AudioMoth_hasTimeBeenSet() == false && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {
+
+            if (ESPBridge_isRequestActive()) {
+
+                uint32_t bridgeCurrentTime;
+                uint32_t bridgeCurrentMilliseconds;
+
+                AudioMoth_getTime(&bridgeCurrentTime, &bridgeCurrentMilliseconds);
+
+                ESPBridge_serviceUntil(bridgeCurrentTime + ESP_TIME_SERVICE_WINDOW_SECONDS);
+
+                waitedMilliseconds += ESP_TIME_SERVICE_WINDOW_SECONDS * MILLISECONDS_IN_SECOND;
+
+            } else {
+
+                if (configSettings->enableLED && waitedMilliseconds % WAITING_LED_FLASH_INTERVAL == 0) {
+                    FLASH_LED(Green, WAITING_LED_FLASH_DURATION)
+                }
+
+                AudioMoth_delay(ESP_TIME_WAIT_STEP_MS);
+
+                waitedMilliseconds += ESP_TIME_WAIT_STEP_MS;
+
+            }
+
+        }
+
+        ESPBridge_setUploadAllowed(false);
+        ESPBridge_setBusy(true);
+
+        if (AudioMoth_hasTimeBeenSet() == false) {
+
+            SAVE_SWITCH_POSITION_AND_POWER_DOWN(DEFAULT_WAIT_INTERVAL);
+
+        }
+
+        AudioMoth_getTime(&currentTime, &currentMilliseconds);
+
+    }
+
+    /* Check if switch has just been moved to CUSTOM or DEFAULT */"""
+
+              if read_time_block not in main:
+                  raise SystemExit("Could not find first read-time block in main.c")
+              main = main.replace(read_time_block, esp_time_block, 1)
+
+          old_acoustic = "bool shouldPerformAcousticConfiguration = switchPosition == AM_SWITCH_CUSTOM && (AudioMoth_hasTimeBeenSet() == false || configSettings->requireAcousticConfiguration);"
+          new_acoustic = "bool shouldPerformAcousticConfiguration = switchPosition == AM_SWITCH_CUSTOM && configSettings->requireAcousticConfiguration;"
+
+          if old_acoustic not in main and new_acoustic not in main:
+              raise SystemExit("Could not find acoustic configuration condition")
+          main = main.replace(old_acoustic, new_acoustic, 1)
+
+          main_path.write_text(main)
+          bridge_path.write_text(bridge2)
+          PY
+
+      - name: Show patched snippets
+        run: |
+          echo "main.c time wait constants:"
+          grep -n "ESP_TIME_" -A3 -B3 src/main.c
+          echo
+          echo "main.c ESP32 time path:"
+          grep -n "ESP32 time-setting path" -A55 -B8 src/main.c
+          echo
+          echo "main.c acoustic config condition:"
+          grep -n "shouldPerformAcousticConfiguration" -A2 -B2 src/main.c
+          echo
+          echo "espbridge.c service guard:"
+          grep -n "void ESPBridge_serviceUntil" -A5 src/espbridge.c
+          echo
+          echo "espbridge.c DELETE guard:"
+          grep -n "static void commandDelete" -A18 src/espbridge.c
+
+      - name: Commit patched firmware code if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- src/main.c src/espbridge.c; then
+            echo "No firmware source changes needed."
+            exit 0
+          fi
+
+          git add src/main.c src/espbridge.c
+          git commit -m "Wait for ESP32 time before acoustic configuration"
+          git push origin master
