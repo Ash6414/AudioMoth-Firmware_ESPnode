@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: audiomoth-firmware-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-bin:
     runs-on: ubuntu-latest
@@ -36,17 +40,23 @@ jobs:
           grep -n "ESP_TIME_WAIT_TIMEOUT_MS" firmware/src/main.c
           grep -n "ESPBridge_serviceUntil" -A3 firmware/src/espbridge.c
 
-      - name: Install ARM GCC toolchain
+      - name: Install ARM GCC and newlib
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             git \
             make \
             gcc-arm-none-eabi \
-            binutils-arm-none-eabi
+            binutils-arm-none-eabi \
+            libnewlib-dev \
+            libnewlib-arm-none-eabi
+          arm-none-eabi-gcc --version
+          printf '#include <time.h>\nint main(void){return 0;}\n' | arm-none-eabi-gcc -x c -E - >/dev/null
 
       - name: Clone AudioMoth build framework
         run: |
+          set -euo pipefail
           git clone --depth 1 https://github.com/OpenAcousticDevices/AudioMoth-Project.git project
 
       - name: Overlay repository files into build framework
@@ -56,14 +66,19 @@ jobs:
           if [ -d firmware/inc ]; then
             cp -f firmware/inc/*.h project/inc/
           fi
+          echo "Build-tree bridge guard:"
+          grep -n "ESPBridge_serviceUntil" -A3 project/src/espbridge.c
+          echo "Build-tree time-wait constants:"
+          grep -n "ESP_TIME_WAIT_TIMEOUT_MS" project/src/main.c
 
-      - name: Configure CI Makefile paths
+      - name: Configure AudioMoth Makefile for CI
         run: |
           set -euo pipefail
           sed -i 's|^TOOLCHAIN_PATH =.*|TOOLCHAIN_PATH = /usr|' project/build/Makefile
           sed -i 's|^TOOLCHAIN_VERSION =.*|TOOLCHAIN_VERSION = |' project/build/Makefile
           sed -i 's|^INC =.*|INC = ../cmsis ../device/inc ../emlib/inc ../emusb/inc ../drivers/inc ../fatfs/inc ../gps/inc ../inc|' project/build/Makefile
           sed -i 's|^SRC =.*|SRC = ../device/src ../emlib/src ../emusb/src ../drivers/src ../fatfs/src ../gps/src ../src|' project/build/Makefile
+          grep -n "^TOOLCHAIN_PATH\|^TOOLCHAIN_VERSION\|^INC =\|^SRC =" project/build/Makefile
 
       - name: Build firmware binary
         working-directory: project/build
@@ -76,12 +91,12 @@ jobs:
         run: |
           set -euo pipefail
           test -s project/build/audiomoth.bin
-          ls -lh project/build/audiomoth.bin
           mkdir -p firmware-artifacts
           cp -f project/build/audiomoth.bin firmware-artifacts/audiomoth.bin
           cp -f project/build/audiomoth.hex firmware-artifacts/audiomoth.hex
           cp -f project/build/audiomoth.map firmware-artifacts/audiomoth.map
           cp -f project/build/audiomoth.lst firmware-artifacts/audiomoth.lst
+          ls -lh firmware-artifacts/
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
