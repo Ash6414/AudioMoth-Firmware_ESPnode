@@ -30,151 +30,106 @@ jobs:
 
           main_path = Path("src/main.c")
           bridge_path = Path("src/espbridge.c")
-
           main = main_path.read_text()
           bridge = bridge_path.read_text()
 
-          main = re.sub(
-              r'static uint8_t firmwareVersion\[AM_FIRMWARE_VERSION_LENGTH\]\s*=\s*\{[^}]+\};',
-              'static uint8_t firmwareVersion[AM_FIRMWARE_VERSION_LENGTH] = {1, 12, 0};',
-              main,
-              count=1,
-          )
-
-          main = re.sub(
-              r'static uint8_t firmwareDescription\[AM_FIRMWARE_DESCRIPTION_LENGTH\]\s*=\s*"[^"]+";',
-              'static uint8_t firmwareDescription[AM_FIRMWARE_DESCRIPTION_LENGTH] = "AudioMoth-Firmware-Basic";',
-              main,
-              count=1,
-          )
+          main = re.sub(r'static uint8_t firmwareVersion\[AM_FIRMWARE_VERSION_LENGTH\]\s*=\s*\{[^}]+\};', 'static uint8_t firmwareVersion[AM_FIRMWARE_VERSION_LENGTH] = {1, 12, 0};', main, count=1)
+          main = re.sub(r'static uint8_t firmwareDescription\[AM_FIRMWARE_DESCRIPTION_LENGTH\]\s*=\s*"[^"]+";', 'static uint8_t firmwareDescription[AM_FIRMWARE_DESCRIPTION_LENGTH] = "AudioMoth-Firmware-Basic";', main, count=1)
 
           if "ESP_TIME_WAIT_TIMEOUT_MS" not in main:
               anchor = "#define USB_CONFIGURATION_BLINK                 400"
               if anchor not in main:
                   raise SystemExit("Missing USB_CONFIGURATION_BLINK anchor")
-              main = main.replace(
-                  anchor,
-                  anchor
-                  + "\n\n#define ESP_TIME_WAIT_TIMEOUT_MS              60000"
-                  + "\n#define ESP_TIME_WAIT_STEP_MS                 50"
-                  + "\n#define ESP_TIME_SERVICE_WINDOW_SECONDS       2",
-                  1,
-              )
+              main = main.replace(anchor, anchor + "\n\n#define ESP_TIME_WAIT_TIMEOUT_MS              60000\n#define ESP_TIME_WAIT_STEP_MS                 50\n#define ESP_TIME_SERVICE_WINDOW_SECONDS       2", 1)
 
           if "ESP32 time-setting path." not in main:
-              pattern = re.compile(
-                  r'(    /\* Read the time \*/\n\n'
-                  r'    uint32_t currentTime;\n\n'
-                  r'    uint32_t currentMilliseconds;\n\n'
-                  r'    AudioMoth_getTime\(&currentTime, &currentMilliseconds\);\n\n)'
-                  r'(    /\* Check if switch has just been moved to CUSTOM or DEFAULT \*/)',
-                  re.M,
-              )
-
-              block = r'''
-    /* ESP32 time-setting path.
-     *
-     * In ESP-node deployments, the ESP32 gets server time and sends TIME over
-     * UART. Do not fall into the stock acoustic chime configuration path just
-     * because the AudioMoth RTC is unset after flashing or power loss.
-     *
-     * File upload remains disabled here. Only non-file bridge commands should
-     * be useful here: PING, STATUS, TIME, DONE. LIST, GET, and DELETE are
-     * rejected because uploadAllowed is false.
-     */
-
-    if (switchPosition == AM_SWITCH_CUSTOM && AudioMoth_hasTimeBeenSet() == false) {
-
-        uint32_t waitedMilliseconds = 0;
-
-        ESPBridge_setBusy(false);
-        ESPBridge_setUploadAllowed(false);
-
-        while (AudioMoth_hasTimeBeenSet() == false && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {
-
-            AudioMoth_feedWatchdog();
-
-            if (ESPBridge_isRequestActive()) {
-
-                uint32_t bridgeCurrentTime;
-                uint32_t bridgeCurrentMilliseconds;
-
-                AudioMoth_getTime(&bridgeCurrentTime, &bridgeCurrentMilliseconds);
-
-                ESPBridge_serviceUntil(bridgeCurrentTime + ESP_TIME_SERVICE_WINDOW_SECONDS);
-
-                waitedMilliseconds += ESP_TIME_SERVICE_WINDOW_SECONDS * MILLISECONDS_IN_SECOND;
-
-            } else {
-
-                if (configSettings->enableLED && waitedMilliseconds % WAITING_LED_FLASH_INTERVAL == 0) {
-                    FLASH_LED(Green, WAITING_LED_FLASH_DURATION)
-                }
-
-                AudioMoth_delay(ESP_TIME_WAIT_STEP_MS);
-
-                waitedMilliseconds += ESP_TIME_WAIT_STEP_MS;
-
-            }
-
-        }
-
-        ESPBridge_setUploadAllowed(false);
-        ESPBridge_setBusy(true);
-
-        if (AudioMoth_hasTimeBeenSet() == false) {
-
-            SAVE_SWITCH_POSITION_AND_POWER_DOWN(DEFAULT_WAIT_INTERVAL);
-
-        }
-
-        AudioMoth_getTime(&currentTime, &currentMilliseconds);
-
-    }
-
-'''
-
+              pattern = re.compile(r'(    /\* Read the time \*/\n\n    uint32_t currentTime;\n\n    uint32_t currentMilliseconds;\n\n    AudioMoth_getTime\(&currentTime, &currentMilliseconds\);\n\n)(    /\* Check if switch has just been moved to CUSTOM or DEFAULT \*/)', re.M)
+              block_lines = [
+                  '    /* ESP32 time-setting path.',
+                  '     *',
+                  '     * In ESP-node deployments, the ESP32 gets server time and sends TIME over',
+                  '     * UART. Do not fall into the stock acoustic chime configuration path just',
+                  '     * because the AudioMoth RTC is unset after flashing or power loss.',
+                  '     *',
+                  '     * File upload remains disabled here. Only non-file bridge commands should',
+                  '     * be useful here: PING, STATUS, TIME, DONE. LIST, GET, and DELETE are',
+                  '     * rejected because uploadAllowed is false.',
+                  '     */',
+                  '',
+                  '    if (switchPosition == AM_SWITCH_CUSTOM && AudioMoth_hasTimeBeenSet() == false) {',
+                  '',
+                  '        uint32_t waitedMilliseconds = 0;',
+                  '',
+                  '        ESPBridge_setBusy(false);',
+                  '        ESPBridge_setUploadAllowed(false);',
+                  '',
+                  '        while (AudioMoth_hasTimeBeenSet() == false && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {',
+                  '',
+                  '            AudioMoth_feedWatchdog();',
+                  '',
+                  '            if (ESPBridge_isRequestActive()) {',
+                  '',
+                  '                uint32_t bridgeCurrentTime;',
+                  '                uint32_t bridgeCurrentMilliseconds;',
+                  '',
+                  '                AudioMoth_getTime(&bridgeCurrentTime, &bridgeCurrentMilliseconds);',
+                  '',
+                  '                ESPBridge_serviceUntil(bridgeCurrentTime + ESP_TIME_SERVICE_WINDOW_SECONDS);',
+                  '',
+                  '                waitedMilliseconds += ESP_TIME_SERVICE_WINDOW_SECONDS * MILLISECONDS_IN_SECOND;',
+                  '',
+                  '            } else {',
+                  '',
+                  '                if (configSettings->enableLED && waitedMilliseconds % WAITING_LED_FLASH_INTERVAL == 0) {',
+                  '                    FLASH_LED(Green, WAITING_LED_FLASH_DURATION)',
+                  '                }',
+                  '',
+                  '                AudioMoth_delay(ESP_TIME_WAIT_STEP_MS);',
+                  '',
+                  '                waitedMilliseconds += ESP_TIME_WAIT_STEP_MS;',
+                  '',
+                  '            }',
+                  '',
+                  '        }',
+                  '',
+                  '        ESPBridge_setUploadAllowed(false);',
+                  '        ESPBridge_setBusy(true);',
+                  '',
+                  '        if (AudioMoth_hasTimeBeenSet() == false) {',
+                  '',
+                  '            SAVE_SWITCH_POSITION_AND_POWER_DOWN(DEFAULT_WAIT_INTERVAL);',
+                  '',
+                  '        }',
+                  '',
+                  '        AudioMoth_getTime(&currentTime, &currentMilliseconds);',
+                  '',
+                  '    }',
+                  ''
+              ]
+              block = "\n".join(block_lines) + "\n"
               main, n = pattern.subn(lambda m: m.group(1) + block + m.group(2), main, count=1)
               if n != 1:
                   raise SystemExit(f"Failed to insert ESP32 time-setting path; replacements={n}")
 
-          main = main.replace(
-              'bool shouldPerformAcousticConfiguration = switchPosition == AM_SWITCH_CUSTOM && (AudioMoth_hasTimeBeenSet() == false || configSettings->requireAcousticConfiguration);',
-              'bool shouldPerformAcousticConfiguration = switchPosition == AM_SWITCH_CUSTOM && configSettings->requireAcousticConfiguration;',
-              1,
-          )
+          main = main.replace('bool shouldPerformAcousticConfiguration = switchPosition == AM_SWITCH_CUSTOM && (AudioMoth_hasTimeBeenSet() == false || configSettings->requireAcousticConfiguration);', 'bool shouldPerformAcousticConfiguration = switchPosition == AM_SWITCH_CUSTOM && configSettings->requireAcousticConfiguration;', 1)
+          main = main.replace('bool listenForAcousticTone = switchPosition == AM_SWITCH_CUSTOM && shouldPerformAcousticConfiguration == false;', 'bool listenForAcousticTone = false;', 1)
 
-          main = main.replace(
-              'bool listenForAcousticTone = switchPosition == AM_SWITCH_CUSTOM && shouldPerformAcousticConfiguration == false;',
-              'bool listenForAcousticTone = false;',
-              1,
-          )
-
-          bridge = bridge.replace(
-              'void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {\n    if (bridgeBusy || !uploadAllowed) return;\n    if (deadlineReached(deadlineUnixSeconds)) return;',
-              'void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {\n    if (bridgeBusy) return;\n    if (deadlineReached(deadlineUnixSeconds)) return;',
-              1,
-          )
+          bridge = bridge.replace('void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {\n    if (bridgeBusy || !uploadAllowed) return;\n    if (deadlineReached(deadlineUnixSeconds)) return;', 'void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {\n    if (bridgeBusy) return;\n    if (deadlineReached(deadlineUnixSeconds)) return;', 1)
 
           if 'static void commandDelete(char *args) {\n    char path[ESPBRIDGE_MAX_PATH];\n\n    if (bridgeBusy || !uploadAllowed)' not in bridge:
-              bridge = bridge.replace(
-                  'static void commandDelete(char *args) {\n    char path[ESPBRIDGE_MAX_PATH];\n',
-                  'static void commandDelete(char *args) {\n    char path[ESPBRIDGE_MAX_PATH];\n\n    if (bridgeBusy || !uploadAllowed) {\n        sendLine("ERR BUSY upload_not_allowed");\n        return;\n    }\n\n',
-                  1,
-              )
+              bridge = bridge.replace('static void commandDelete(char *args) {\n    char path[ESPBRIDGE_MAX_PATH];\n', 'static void commandDelete(char *args) {\n    char path[ESPBRIDGE_MAX_PATH];\n\n    if (bridgeBusy || !uploadAllowed) {\n        sendLine("ERR BUSY upload_not_allowed");\n        return;\n    }\n\n', 1)
 
-          checks = {
-              "main identity version": 'static uint8_t firmwareVersion[AM_FIRMWARE_VERSION_LENGTH] = {1, 12, 0};' in main,
-              "main identity description": 'AudioMoth-Firmware-Basic' in main,
-              "main ESP constants": 'ESP_TIME_WAIT_TIMEOUT_MS' in main,
-              "main ESP wait block": 'ESP32 time-setting path.' in main,
-              "main no unset-time acoustic trigger": 'AudioMoth_hasTimeBeenSet() == false || configSettings->requireAcousticConfiguration' not in main,
-              "main acoustic tone disabled": 'bool listenForAcousticTone = false;' in main,
-              "bridge service allows non-upload commands": 'if (bridgeBusy || !uploadAllowed) return;' not in bridge,
-              "bridge delete still upload gated": 'static void commandDelete(char *args) {\n    char path[ESPBRIDGE_MAX_PATH];\n\n    if (bridgeBusy || !uploadAllowed)' in bridge,
-          }
-
-          for name, ok in checks.items():
+          checks = [
+              ('main identity version', 'static uint8_t firmwareVersion[AM_FIRMWARE_VERSION_LENGTH] = {1, 12, 0};' in main),
+              ('main identity description', 'AudioMoth-Firmware-Basic' in main),
+              ('main ESP constants', 'ESP_TIME_WAIT_TIMEOUT_MS' in main),
+              ('main ESP wait block', 'ESP32 time-setting path.' in main),
+              ('main no unset-time acoustic trigger', 'AudioMoth_hasTimeBeenSet() == false || configSettings->requireAcousticConfiguration' not in main),
+              ('main acoustic tone disabled', 'bool listenForAcousticTone = false;' in main),
+              ('bridge service allows non-upload commands', 'if (bridgeBusy || !uploadAllowed) return;' not in bridge),
+              ('bridge delete still upload gated', 'static void commandDelete(char *args) {\n    char path[ESPBRIDGE_MAX_PATH];\n\n    if (bridgeBusy || !uploadAllowed)' in bridge),
+          ]
+          for name, ok in checks:
               print(f"{name}: {ok}")
               if not ok:
                   raise SystemExit(f"Sanity check failed: {name}")
