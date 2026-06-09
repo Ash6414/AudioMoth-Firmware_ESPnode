@@ -48,6 +48,7 @@
 #define SERVICE_DEBUG_PULSE_MS              150
 #define SERVICE_READY_FLOOD_LINES           40
 #define SERVICE_READY_FLOOD_GAP_MS          20
+#define SERVICE_READY_REPEAT_MS             500
 #define MILLISECONDS_PER_SECOND             1000
 #define MICROSECONDS_PER_SECOND             1000000
 
@@ -545,15 +546,22 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     configureBridgeUart();
 
     floodReadyLine();
+    uint32_t lastReadyMs = elapsedServiceMilliseconds(serviceStartSeconds, serviceStartMilliseconds);
 
     while (elapsedServiceMilliseconds(serviceStartSeconds, serviceStartMilliseconds) < SERVICE_MAX_WINDOW_MS) {
         WDOG_Feed();
 
+        uint32_t serviceElapsedMs = elapsedServiceMilliseconds(serviceStartSeconds, serviceStartMilliseconds);
         bool deadlineDone = deadlineReached(deadlineUnixSeconds);
         bool requestActive = rawRequestPinActive();
         bool rxAvailable = uartRxAvailable();
 
         if (deadlineDone && !requestActive && !rxAvailable) break;
+
+        if (!rxAvailable && serviceElapsedMs - lastReadyMs >= SERVICE_READY_REPEAT_MS) {
+            sendLine("OK BRIDGE_READY");
+            lastReadyMs = serviceElapsedMs;
+        }
 
         if (!requestActive && !rxAvailable) {
             if (idleMs >= SERVICE_IDLE_TIMEOUT_MS) break;
