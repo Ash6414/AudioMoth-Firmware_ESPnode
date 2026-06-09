@@ -1,6 +1,8 @@
-# AudioMoth-Firmware-EspNode
+# AudioMoth-Firmware-Basic
 
 Firmware for AudioMoth devices, used in conjunction with the AudioMoth-Project framework, to produce the standard AudioMoth releases.
+
+This ESPBridge fork intentionally keeps the firmware name `AudioMoth-Firmware-Basic` so the AudioMoth Configuration App treats it like the standard Basic firmware. The ESP bridge changes live in the source files; do not rename the USB firmware description in `src/main.c`.
 
 Compatible with the [AudioMoth Configuration App](https://github.com/OpenAcousticDevices/AudioMoth-Configuration-App). For usage instructions, visit [Open Acoustic Devices](https://www.openacousticdevices.info/getting-started).
 
