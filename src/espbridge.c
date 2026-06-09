@@ -2,28 +2,9 @@
  * espbridge.c
  * AudioMoth Dev <-> ESP32 upload bridge.
  *
- * Protocol is ASCII commands plus binary DATA payloads.
- * Commands from ESP32:
- *   STATUS\n
- *   TIME <unix_seconds> <milliseconds>\n
- *   LIST\n
- *   GET <path> <offset> <max_bytes>\n
- *   DELETE <path>\n            // ESP32 should send only after server-confirmed upload
- *   DONE\n             // ESP32 releases service window
- *   PING\n
- *
- * Responses from AudioMoth:
- *   OK ...\n
- *   ERR <code> <detail>\n
- *   FILE <path> <size_bytes>\n
- *   END\n
- *   DATA <path> <offset> <n_bytes> <crc32_hex>\n<raw bytes>
- *
- * Notes:
- *   - This file assumes the standard AudioMoth-Project build exposes EMLIB,
- *     FatFS, and audiomoth.h.
- *   - UART route uses USART1 location 2 because AudioMoth Dev labels b9/b10
- *     as U1_TX#2 / U1_RX#2.
+ * Protocol is ASCII commands plus binary DATA payloads. AudioMoth owns the
+ * microSD at all times; the ESP32 requests files over UART only while the
+ * scheduler has opened a safe bridge window.
  *****************************************************************************/
 
 #include <stdint.h>
@@ -60,6 +41,7 @@
 #define RX_LINE_TIMEOUT_MS                  250
 #define SERVICE_IDLE_TIMEOUT_MS             3000
 #define SERVICE_MAX_WINDOW_MS               30000
+#define MILLISECONDS_PER_SECOND             1000
 
 static volatile bool bridgeBusy = true;
 static volatile bool uploadAllowed = false;
@@ -183,6 +165,27 @@ static bool deadlineReached(uint32_t deadlineUnixSeconds) {
     uint32_t now, ms;
     AudioMoth_getTime(&now, &ms);
     return now >= deadlineUnixSeconds;
+}
+
+static uint32_t elapsedServiceMilliseconds(uint32_t startSeconds, uint32_t startMilliseconds) {
+    uint32_t now, milliseconds;
+    AudioMoth_getTime(&now, &milliseconds);
+
+    if (now < startSeconds) return SERVICE_MAX_WINDOW_MS;
+
+    uint32_t elapsedSeconds = now - startSeconds;
+    int32_t elapsedMilliseconds = (int32_t)milliseconds - (int32_t)startMilliseconds;
+
+    if (elapsedMilliseconds < 0) {
+        if (elapsedSeconds == 0) return 0;
+        elapsedSeconds -= 1;
+        elapsedMilliseconds += MILLISECONDS_PER_SECOND;
+    }
+
+    if (elapsedSeconds >= SERVICE_MAX_WINDOW_MS / MILLISECONDS_PER_SECOND + 1) return SERVICE_MAX_WINDOW_MS;
+
+    uint32_t elapsed = elapsedSeconds * MILLISECONDS_PER_SECOND + (uint32_t)elapsedMilliseconds;
+    return elapsed > SERVICE_MAX_WINDOW_MS ? SERVICE_MAX_WINDOW_MS : elapsed;
 }
 
 /* ---------------- File operations ---------------- */
@@ -349,7 +352,7 @@ static void commandStatus(uint32_t deadlineUnixSeconds) {
              (unsigned long)deadlineUnixSeconds);
 }
 
-static void handleCommand(uint32_t deadlineUnixSeconds) {
+static bool handleCommand(uint32_t deadlineUnixSeconds) {
     if (strcmp(lineBuffer, "PING") == 0) {
         sendLine("OK PONG");
     } else if (strcmp(lineBuffer, "STATUS") == 0) {
@@ -364,9 +367,12 @@ static void handleCommand(uint32_t deadlineUnixSeconds) {
         commandDelete(lineBuffer + 7);
     } else if (strcmp(lineBuffer, "DONE") == 0) {
         sendLine("OK DONE");
+        return true;
     } else {
         sendLine("ERR CMD unknown_command");
     }
+
+    return false;
 }
 
 /* ---------------- Public API ---------------- */
@@ -398,22 +404,10 @@ void ESPBridge_init(void) {
 void ESPBridge_setBusy(bool busy) {
     bridgeBusy = busy;
     gpioWrite(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, busy);
-
-    if (!busy && ESPBridge_isRequestActive() && !serviceActive) {
-        uint32_t now, ms;
-        AudioMoth_getTime(&now, &ms);
-        ESPBridge_serviceUntil(now + 1);
-    }
 }
 
 void ESPBridge_setUploadAllowed(bool allowed) {
     uploadAllowed = allowed;
-
-    if (allowed && !bridgeBusy && ESPBridge_isRequestActive() && !serviceActive) {
-        uint32_t now, ms;
-        AudioMoth_getTime(&now, &ms);
-        ESPBridge_serviceUntil(now + 1);
-    }
 }
 
 bool ESPBridge_isRequestActive(void) {
@@ -426,10 +420,12 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     serviceActive = true;
 
     uint32_t idleMs = 0;
-    uint32_t serviceMs = 0;
+    uint32_t serviceStartSeconds, serviceStartMilliseconds;
+    AudioMoth_getTime(&serviceStartSeconds, &serviceStartMilliseconds);
+
     sendLine("OK BRIDGE_READY");
 
-    while (serviceMs < SERVICE_MAX_WINDOW_MS) {
+    while (elapsedServiceMilliseconds(serviceStartSeconds, serviceStartMilliseconds) < SERVICE_MAX_WINDOW_MS) {
         WDOG_Feed();
 
         bool deadlineDone = deadlineReached(deadlineUnixSeconds);
@@ -442,16 +438,14 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
             if (idleMs >= SERVICE_IDLE_TIMEOUT_MS) break;
             AudioMoth_delay(10);
             idleMs += 10;
-            serviceMs += 10;
             continue;
         }
 
         if (readLine(RX_LINE_TIMEOUT_MS)) {
             idleMs = 0;
-            handleCommand(deadlineUnixSeconds);
+            if (handleCommand(deadlineUnixSeconds)) break;
         } else {
             idleMs += RX_LINE_TIMEOUT_MS;
-            serviceMs += RX_LINE_TIMEOUT_MS;
         }
     }
 
