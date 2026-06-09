@@ -16,6 +16,7 @@
 
 #include "em_cmu.h"
 #include "em_gpio.h"
+#include "em_timer.h"
 #include "em_usart.h"
 #include "em_wdog.h"
 
@@ -46,37 +47,73 @@
 #define SERVICE_MAX_WINDOW_MS               30000
 #define SERVICE_DEBUG_PULSE_MS              150
 #define MILLISECONDS_PER_SECOND             1000
+#define MICROSECONDS_PER_SECOND             1000000
 
 static volatile bool bridgeBusy = true;
 static volatile bool uploadAllowed = false;
 static bool filesystemEnabled = false;
 static bool serviceActive = false;
+static uint32_t softUartTicksPerBit = 0;
+static uint32_t softUartTicksPerMillisecond = 0;
 
 static char lineBuffer[ESPBRIDGE_MAX_LINE];
 static uint8_t chunkBuffer[ESPBRIDGE_CHUNK_BYTES];
 
 /* ---------------- UART primitives ---------------- */
 
-static void configureBridgeUart(void) {
+static void configureBridgePins(void) {
     CMU_ClockEnable(cmuClock_GPIO, true);
     CMU_ClockEnable(BRIDGE_UART_CLOCK, true);
 
     USART_Reset(BRIDGE_UART);
+    CMU_ClockEnable(BRIDGE_UART_CLOCK, false);
 
     GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
     GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
+}
 
-    USART_InitAsync_TypeDef init = USART_INITASYNC_DEFAULT;
-    init.enable = usartDisable;
-    init.baudrate = ESPBRIDGE_DEFAULT_BAUD;
-    init.oversampling = usartOVS4;
-    USART_InitAsync(BRIDGE_UART, &init);
+static void startSoftUartTimer(void) {
+    CMU_ClockEnable(cmuClock_TIMER1, true);
+    TIMER_Reset(TIMER1);
 
-    BRIDGE_UART->ROUTE = UART_ROUTE_TXPEN |
-                         UART_ROUTE_RXPEN |
-                         BRIDGE_UART_LOCATION;
+    TIMER_Init_TypeDef timerInit = TIMER_INIT_DEFAULT;
+    timerInit.enable = false;
+    timerInit.prescale = timerPrescale1;
 
-    USART_Enable(BRIDGE_UART, usartEnable);
+    TIMER_Init(TIMER1, &timerInit);
+    TIMER_TopSet(TIMER1, UINT16_MAX);
+    TIMER_CounterSet(TIMER1, 0);
+    TIMER_Enable(TIMER1, true);
+
+    uint32_t timerFrequency = CMU_ClockFreqGet(cmuClock_TIMER1);
+    softUartTicksPerBit = (timerFrequency + ESPBRIDGE_DEFAULT_BAUD / 2) / ESPBRIDGE_DEFAULT_BAUD;
+    softUartTicksPerMillisecond = (timerFrequency + 500) / 1000;
+}
+
+static void stopSoftUartTimer(void) {
+    TIMER_Enable(TIMER1, false);
+    TIMER_Reset(TIMER1);
+    CMU_ClockEnable(cmuClock_TIMER1, false);
+    softUartTicksPerBit = 0;
+    softUartTicksPerMillisecond = 0;
+}
+
+static void configureBridgeUart(void) {
+    configureBridgePins();
+    startSoftUartTimer();
+}
+
+static void softUartDelayTicks(uint32_t ticks) {
+    uint16_t start = (uint16_t)TIMER_CounterGet(TIMER1);
+    while ((uint16_t)(TIMER_CounterGet(TIMER1) - start) < ticks) {
+    }
+}
+
+static void bridgeDelayMilliseconds(uint32_t milliseconds) {
+    for (uint32_t i = 0; i < milliseconds; i += 1) {
+        softUartDelayTicks(softUartTicksPerMillisecond);
+        WDOG_Feed();
+    }
 }
 
 static inline void gpioWrite(GPIO_Port_TypeDef port, unsigned int pin, bool value) {
@@ -106,11 +143,8 @@ static void pulseBusyDebug(void) {
 
 static void pulseTxPinDebug(void) {
     /* Visible on ESP GPIO16 if b9 really reaches the ESP RX input. */
-    uint32_t route = BRIDGE_UART->ROUTE;
-    BRIDGE_UART->ROUTE = route & ~UART_ROUTE_TXPEN;
     pulsePin(BRIDGE_TX_PORT, BRIDGE_TX_PIN, true, 3);
     GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
-    BRIDGE_UART->ROUTE = route;
 }
 
 static inline bool rawRequestPinActive(void) {
@@ -118,15 +152,35 @@ static inline bool rawRequestPinActive(void) {
 }
 
 static inline bool uartRxAvailable(void) {
-    return (USART_StatusGet(BRIDGE_UART) & UART_STATUS_RXDATAV) != 0;
+    return GPIO_PinInGet(BRIDGE_RX_PORT, BRIDGE_RX_PIN) == 0;
 }
 
-static uint8_t uartReadByte(void) {
-    return (uint8_t)USART_Rx(BRIDGE_UART);
+static bool uartReadByte(uint8_t *byte) {
+    if (GPIO_PinInGet(BRIDGE_RX_PORT, BRIDGE_RX_PIN) != 0) return false;
+
+    softUartDelayTicks(softUartTicksPerBit + softUartTicksPerBit / 2);
+
+    uint8_t value = 0;
+    for (uint32_t bit = 0; bit < 8; bit += 1) {
+        if (GPIO_PinInGet(BRIDGE_RX_PORT, BRIDGE_RX_PIN)) value |= (1U << bit);
+        softUartDelayTicks(softUartTicksPerBit);
+    }
+
+    *byte = value;
+    return true;
 }
 
 static void uartWriteByte(uint8_t byte) {
-    USART_Tx(BRIDGE_UART, byte);
+    gpioWrite(BRIDGE_TX_PORT, BRIDGE_TX_PIN, false);
+    softUartDelayTicks(softUartTicksPerBit);
+
+    for (uint32_t bit = 0; bit < 8; bit += 1) {
+        gpioWrite(BRIDGE_TX_PORT, BRIDGE_TX_PIN, (byte & (1U << bit)) != 0);
+        softUartDelayTicks(softUartTicksPerBit);
+    }
+
+    gpioWrite(BRIDGE_TX_PORT, BRIDGE_TX_PIN, true);
+    softUartDelayTicks(softUartTicksPerBit);
 }
 
 static void uartWrite(const void *data, uint32_t length) {
@@ -149,13 +203,17 @@ static void sendLine(const char *fmt, ...) {
 /* Returns true when a complete line was read. CR is ignored. */
 static bool readLine(uint32_t timeoutMs) {
     uint32_t index = 0;
-    uint32_t elapsed = 0;
+    uint32_t elapsedTicks = 0;
+    uint32_t timeoutTicks = timeoutMs * softUartTicksPerMillisecond;
+    uint32_t pollTicks = softUartTicksPerBit / 4;
+    if (pollTicks == 0) pollTicks = 1;
 
-    while (elapsed < timeoutMs && index < ESPBRIDGE_MAX_LINE - 1) {
+    while (elapsedTicks < timeoutTicks && index < ESPBRIDGE_MAX_LINE - 1) {
         WDOG_Feed();
 
-        if (uartRxAvailable()) {
-            char c = (char)uartReadByte();
+        uint8_t byte;
+        if (uartReadByte(&byte)) {
+            char c = (char)byte;
             if (c == '\r') continue;
             if (c == '\n') {
                 lineBuffer[index] = 0;
@@ -163,8 +221,8 @@ static bool readLine(uint32_t timeoutMs) {
             }
             lineBuffer[index++] = c;
         } else {
-            AudioMoth_delay(1);
-            elapsed += 1;
+            softUartDelayTicks(pollTicks);
+            elapsedTicks += pollTicks;
         }
     }
 
@@ -439,7 +497,7 @@ void ESPBridge_init(void) {
     GPIO_PinModeSet(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, gpioModePushPull, 1);
     GPIO_PinModeSet(BRIDGE_REQ_PORT, BRIDGE_REQ_PIN, gpioModeInputPull, 0);
 
-    configureBridgeUart();
+    configureBridgePins();
 
     bridgeBusy = true;
     uploadAllowed = false;
@@ -468,7 +526,6 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     if (bridgeBusy || serviceActive) return;
 
     serviceActive = true;
-    configureBridgeUart();
 
     uint32_t idleMs = 0;
     uint32_t serviceStartSeconds, serviceStartMilliseconds;
@@ -491,7 +548,7 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
 
         if (!requestActive && !rxAvailable) {
             if (idleMs >= SERVICE_IDLE_TIMEOUT_MS) break;
-            AudioMoth_delay(10);
+            bridgeDelayMilliseconds(10);
             idleMs += 10;
             continue;
         }
@@ -505,5 +562,6 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     }
 
     sendLine("OK BRIDGE_SLEEP");
+    stopSoftUartTimer();
     serviceActive = false;
 }
