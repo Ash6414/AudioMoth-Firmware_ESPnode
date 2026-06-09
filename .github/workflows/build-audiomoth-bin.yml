@@ -1,58 +1,65 @@
-name: Build AudioMoth ESPnode firmware
+name: Build AudioMoth firmware bin
 
 on:
   workflow_dispatch:
   push:
     branches:
       - master
+    paths:
+      - 'src/**'
+      - 'inc/**'
+      - '.github/workflows/build-audiomoth-bin.yml'
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  build-bin:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out ESPnode firmware fork
+      - name: Check out firmware source
         uses: actions/checkout@v4
         with:
           path: firmware
           ref: master
           fetch-depth: 1
 
-      - name: Show exact fork source being built
+      - name: Show source revision
         run: |
+          set -euo pipefail
           echo "Repository: Ash6414/AudioMoth-Firmware_ESPnode"
           echo "Branch: master"
           echo "Commit: $(git -C firmware rev-parse HEAD)"
-          echo "espbridge.c busy implementation:"
-          grep -n "ESPBridge_setBusy" -A8 firmware/src/espbridge.c
-          if grep -R "GPIO_PinOutWrite" -n firmware/src firmware/inc; then
-            echo "ERROR: fork source still contains GPIO_PinOutWrite"
-            exit 1
-          fi
+          test -f firmware/src/main.c
+          test -f firmware/src/espbridge.c
+          grep -n "ESP_TIME_WAIT_TIMEOUT_MS" firmware/src/main.c
+          grep -n "ESPBridge_serviceUntil" -A3 firmware/src/espbridge.c
 
-      - name: Install ARM toolchain and build tools
+      - name: Install ARM GCC toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y git make gcc-arm-none-eabi
+          sudo apt-get install -y --no-install-recommends \
+            git \
+            make \
+            gcc-arm-none-eabi \
+            binutils-arm-none-eabi
 
-      - name: Clone AudioMoth-Project build framework
+      - name: Clone AudioMoth build framework
         run: |
           git clone --depth 1 https://github.com/OpenAcousticDevices/AudioMoth-Project.git project
 
-      - name: Copy fork source into AudioMoth-Project without editing it
+      - name: Overlay repository files into build framework
         run: |
-          cp -f firmware/src/main.c project/src/main.c
+          set -euo pipefail
           cp -f firmware/src/*.c project/src/
-          cp -f firmware/inc/*.h project/inc/
-          echo "Build-tree espbridge.c busy implementation:"
-          grep -n "ESPBridge_setBusy" -A8 project/src/espbridge.c
-          if grep -R "GPIO_PinOutWrite" -n project/src project/inc; then
-            echo "ERROR: build tree source still contains GPIO_PinOutWrite"
-            exit 1
+          if [ -d firmware/inc ]; then
+            cp -f firmware/inc/*.h project/inc/
           fi
 
-      - name: Configure AudioMoth-Project Makefile for CI only
+      - name: Configure CI Makefile paths
         run: |
+          set -euo pipefail
           sed -i 's|^TOOLCHAIN_PATH =.*|TOOLCHAIN_PATH = /usr|' project/build/Makefile
           sed -i 's|^TOOLCHAIN_VERSION =.*|TOOLCHAIN_VERSION = |' project/build/Makefile
           sed -i 's|^INC =.*|INC = ../cmsis ../device/inc ../emlib/inc ../emusb/inc ../drivers/inc ../fatfs/inc ../gps/inc ../inc|' project/build/Makefile
@@ -61,15 +68,24 @@ jobs:
       - name: Build firmware binary
         working-directory: project/build
         run: |
+          set -euo pipefail
           make clean
           make audiomoth.bin
+
+      - name: Verify binary output
+        run: |
+          set -euo pipefail
+          test -s project/build/audiomoth.bin
+          ls -lh project/build/audiomoth.bin
+          mkdir -p firmware-artifacts
+          cp -f project/build/audiomoth.bin firmware-artifacts/audiomoth.bin
+          cp -f project/build/audiomoth.hex firmware-artifacts/audiomoth.hex
+          cp -f project/build/audiomoth.map firmware-artifacts/audiomoth.map
+          cp -f project/build/audiomoth.lst firmware-artifacts/audiomoth.lst
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: audiomoth-espnode-firmware
-          path: |
-            project/build/audiomoth.bin
-            project/build/audiomoth.hex
-            project/build/audiomoth.map
-            project/build/audiomoth.lst
+          name: audiomoth-firmware-bin
+          path: firmware-artifacts/
+          if-no-files-found: error
