@@ -119,6 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 firmware/tools/apply-espbridge-request-service.py
+          grep -n 'ESP32 startup request service' project/src/main.c
           grep -n 'ESP32 request service' project/src/main.c
           grep -n 'uploadServiceAllowed' project/src/main.c
 
@@ -170,7 +171,7 @@ jobs:
             echo "firmware_description=AudioMoth-Firmware-Basic"
             echo "firmware_version=1.12.0"
             echo "espbridge_baud=9600"
-            echo "espbridge_request_service=active_request_gets_uart_window"
+            echo "espbridge_request_service=startup_and_scheduler_request_windows"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt
 
