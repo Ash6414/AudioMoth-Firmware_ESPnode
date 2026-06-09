@@ -66,6 +66,10 @@
 
 #define USB_CONFIGURATION_BLINK                 400
 
+#define ESP_TIME_WAIT_TIMEOUT_MS              60000
+#define ESP_TIME_WAIT_STEP_MS                 50
+#define ESP_TIME_SERVICE_WINDOW_SECONDS       2
+
 /* SRAM buffer constants */
 
 #define NUMBER_OF_BUFFERS                       8
@@ -1816,6 +1820,66 @@ int main(void) {
 
     AudioMoth_getTime(&currentTime, &currentMilliseconds);
 
+    /* ESP32 time-setting path.
+     *
+     * In ESP-node deployments, the ESP32 gets server time and sends TIME over
+     * UART. Do not fall into the stock acoustic chime configuration path just
+     * because the AudioMoth RTC is unset after flashing or power loss.
+     *
+     * File upload remains disabled here. Only non-file bridge commands should
+     * be useful here: PING, STATUS, TIME, DONE. LIST, GET, and DELETE are
+     * rejected because uploadAllowed is false.
+     */
+
+    if (switchPosition == AM_SWITCH_CUSTOM && AudioMoth_hasTimeBeenSet() == false) {
+
+        uint32_t waitedMilliseconds = 0;
+
+        ESPBridge_setBusy(false);
+        ESPBridge_setUploadAllowed(false);
+
+        while (AudioMoth_hasTimeBeenSet() == false && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {
+
+            AudioMoth_feedWatchdog();
+
+            if (ESPBridge_isRequestActive()) {
+
+                uint32_t bridgeCurrentTime;
+                uint32_t bridgeCurrentMilliseconds;
+
+                AudioMoth_getTime(&bridgeCurrentTime, &bridgeCurrentMilliseconds);
+
+                ESPBridge_serviceUntil(bridgeCurrentTime + ESP_TIME_SERVICE_WINDOW_SECONDS);
+
+                waitedMilliseconds += ESP_TIME_SERVICE_WINDOW_SECONDS * MILLISECONDS_IN_SECOND;
+
+            } else {
+
+                if (configSettings->enableLED && waitedMilliseconds % WAITING_LED_FLASH_INTERVAL == 0) {
+                    FLASH_LED(Green, WAITING_LED_FLASH_DURATION)
+                }
+
+                AudioMoth_delay(ESP_TIME_WAIT_STEP_MS);
+
+                waitedMilliseconds += ESP_TIME_WAIT_STEP_MS;
+
+            }
+
+        }
+
+        ESPBridge_setUploadAllowed(false);
+        ESPBridge_setBusy(true);
+
+        if (AudioMoth_hasTimeBeenSet() == false) {
+
+            SAVE_SWITCH_POSITION_AND_POWER_DOWN(DEFAULT_WAIT_INTERVAL);
+
+        }
+
+        AudioMoth_getTime(&currentTime, &currentMilliseconds);
+
+    }
+
     /* Check if switch has just been moved to CUSTOM or DEFAULT */
 
     bool fileSystemEnabled = false;
@@ -1858,7 +1922,7 @@ int main(void) {
 
             /* Determine whether to listen for the acoustic tone */
 
-            bool listenForAcousticTone = switchPosition == AM_SWITCH_CUSTOM && shouldPerformAcousticConfiguration == false;
+            bool listenForAcousticTone = false;
 
             if (listenForAcousticTone) {
 

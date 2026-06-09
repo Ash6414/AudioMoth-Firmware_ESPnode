@@ -299,6 +299,12 @@ static void commandGet(char *args) {
 
 static void commandDelete(char *args) {
     char path[ESPBRIDGE_MAX_PATH];
+
+    if (bridgeBusy || !uploadAllowed) {
+        sendLine("ERR BUSY upload_not_allowed");
+        return;
+    }
+
     if (sscanf(args, "%95s", path) != 1) {
         sendLine("ERR ARG usage_DELETE_path");
         return;
@@ -400,7 +406,7 @@ bool ESPBridge_isRequestActive(void) {
 }
 
 void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
-    if (bridgeBusy || !uploadAllowed) return;
+    if (bridgeBusy) return;
     if (deadlineReached(deadlineUnixSeconds)) return;
 
     uint32_t idleMs = 0;
