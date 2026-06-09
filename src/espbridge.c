@@ -23,10 +23,10 @@
 #include "audiomoth.h"
 #include "espbridge.h"
 
-/* AudioMoth Dev left JST header */
-#define BRIDGE_UART                         USART1
-#define BRIDGE_UART_CLOCK                   cmuClock_USART1
-#define BRIDGE_UART_LOCATION                USART_ROUTE_LOCATION_LOC2
+/* AudioMoth Dev left JST header. The b9/b10 U1 pins are UART1 route location 2. */
+#define BRIDGE_UART                         UART1
+#define BRIDGE_UART_CLOCK                   cmuClock_UART1
+#define BRIDGE_UART_LOCATION                UART_ROUTE_LOCATION_LOC2
 
 #define BRIDGE_TX_PORT                      gpioPortB    /* b9, AudioMoth TX -> ESP RX */
 #define BRIDGE_TX_PIN                       9
@@ -62,7 +62,7 @@ static inline void gpioWrite(GPIO_Port_TypeDef port, unsigned int pin, bool valu
 }
 
 static inline bool uartRxAvailable(void) {
-    return (USART_StatusGet(BRIDGE_UART) & USART_STATUS_RXDATAV) != 0;
+    return (USART_StatusGet(BRIDGE_UART) & UART_STATUS_RXDATAV) != 0;
 }
 
 static uint8_t uartReadByte(void) {
@@ -382,7 +382,7 @@ void ESPBridge_init(void) {
     CMU_ClockEnable(BRIDGE_UART_CLOCK, true);
 
     GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
-    GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInput, 0);
+    GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
     GPIO_PinModeSet(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, gpioModePushPull, 1);
     GPIO_PinModeSet(BRIDGE_REQ_PORT, BRIDGE_REQ_PIN, gpioModeInputPull, 0);
 
@@ -391,8 +391,8 @@ void ESPBridge_init(void) {
     init.oversampling = usartOVS4;
     USART_InitAsync(BRIDGE_UART, &init);
 
-    BRIDGE_UART->ROUTE = USART_ROUTE_TXPEN |
-                         USART_ROUTE_RXPEN |
+    BRIDGE_UART->ROUTE = UART_ROUTE_TXPEN |
+                         UART_ROUTE_RXPEN |
                          BRIDGE_UART_LOCATION;
 
     bridgeBusy = true;
