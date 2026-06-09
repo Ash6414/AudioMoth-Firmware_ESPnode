@@ -1831,14 +1831,14 @@ int main(void) {
      * rejected because uploadAllowed is false.
      */
 
-    if (switchPosition == AM_SWITCH_CUSTOM && AudioMoth_hasTimeBeenSet() == false) {
+    if (switchPosition == AM_SWITCH_CUSTOM && (AudioMoth_hasTimeBeenSet() == false || ESPBridge_isRequestActive())) {
 
         uint32_t waitedMilliseconds = 0;
 
         ESPBridge_setBusy(false);
         ESPBridge_setUploadAllowed(false);
 
-        while (AudioMoth_hasTimeBeenSet() == false && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {
+        while ((AudioMoth_hasTimeBeenSet() == false || ESPBridge_isRequestActive()) && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {
 
             AudioMoth_feedWatchdog();
 
