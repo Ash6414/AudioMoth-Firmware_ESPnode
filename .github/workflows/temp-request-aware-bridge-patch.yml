@@ -1,0 +1,56 @@
+name: TEMP Request-Aware Bridge Patch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out firmware repository
+        uses: actions/checkout@v5
+        with:
+          ref: master
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Make AudioMoth service ESP bridge when request is active
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/main.c')
+          s = p.read_text()
+          s = s.replace(
+              'if (switchPosition == AM_SWITCH_CUSTOM && AudioMoth_hasTimeBeenSet() == false) {',
+              'if (switchPosition == AM_SWITCH_CUSTOM && (AudioMoth_hasTimeBeenSet() == false || ESPBridge_isRequestActive())) {',
+              1,
+          )
+          s = s.replace(
+              'while (AudioMoth_hasTimeBeenSet() == false && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {',
+              'while ((AudioMoth_hasTimeBeenSet() == false || ESPBridge_isRequestActive()) && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {',
+              1,
+          )
+          if 'if (switchPosition == AM_SWITCH_CUSTOM && (AudioMoth_hasTimeBeenSet() == false || ESPBridge_isRequestActive())) {' not in s:
+              raise SystemExit('request-aware if condition missing')
+          if 'while ((AudioMoth_hasTimeBeenSet() == false || ESPBridge_isRequestActive()) && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {' not in s:
+              raise SystemExit('request-aware while condition missing')
+          p.write_text(s)
+          PY
+
+      - name: Commit patch
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet -- src/main.c; then
+            echo 'No change needed.'
+          else
+            git diff -- src/main.c
+            git add src/main.c
+            git commit -m 'Service ESP bridge when request is active'
+            git push origin master
+          fi
