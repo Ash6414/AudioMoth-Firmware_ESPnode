@@ -64,6 +64,7 @@
 static volatile bool bridgeBusy = true;
 static volatile bool uploadAllowed = false;
 static bool filesystemEnabled = false;
+static bool serviceActive = false;
 
 static char lineBuffer[ESPBRIDGE_MAX_LINE];
 static uint8_t chunkBuffer[ESPBRIDGE_CHUNK_BYTES];
@@ -391,6 +392,7 @@ void ESPBridge_init(void) {
     bridgeBusy = true;
     uploadAllowed = false;
     filesystemEnabled = false;
+    serviceActive = false;
 }
 
 void ESPBridge_setBusy(bool busy) {
@@ -400,6 +402,12 @@ void ESPBridge_setBusy(bool busy) {
 
 void ESPBridge_setUploadAllowed(bool allowed) {
     uploadAllowed = allowed;
+
+    if (allowed && !bridgeBusy && ESPBridge_isRequestActive() && !serviceActive) {
+        uint32_t now, ms;
+        AudioMoth_getTime(&now, &ms);
+        ESPBridge_serviceUntil(now + 1);
+    }
 }
 
 bool ESPBridge_isRequestActive(void) {
@@ -407,7 +415,9 @@ bool ESPBridge_isRequestActive(void) {
 }
 
 void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
-    if (bridgeBusy) return;
+    if (bridgeBusy || serviceActive) return;
+
+    serviceActive = true;
 
     uint32_t idleMs = 0;
     uint32_t serviceMs = 0;
@@ -440,4 +450,5 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     }
 
     sendLine("OK BRIDGE_SLEEP");
+    serviceActive = false;
 }
