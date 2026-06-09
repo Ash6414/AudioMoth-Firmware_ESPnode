@@ -59,6 +59,7 @@
 
 #define RX_LINE_TIMEOUT_MS                  250
 #define SERVICE_IDLE_TIMEOUT_MS             3000
+#define SERVICE_MAX_WINDOW_MS               30000
 
 static volatile bool bridgeBusy = true;
 static volatile bool uploadAllowed = false;
@@ -407,18 +408,25 @@ bool ESPBridge_isRequestActive(void) {
 
 void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     if (bridgeBusy) return;
-    if (deadlineReached(deadlineUnixSeconds)) return;
 
     uint32_t idleMs = 0;
+    uint32_t serviceMs = 0;
     sendLine("OK BRIDGE_READY");
 
-    while (!deadlineReached(deadlineUnixSeconds)) {
+    while (serviceMs < SERVICE_MAX_WINDOW_MS) {
         WDOG_Feed();
 
-        if (!ESPBridge_isRequestActive() && !uartRxAvailable()) {
+        bool deadlineDone = deadlineReached(deadlineUnixSeconds);
+        bool requestActive = ESPBridge_isRequestActive();
+        bool rxAvailable = uartRxAvailable();
+
+        if (deadlineDone && !requestActive && !rxAvailable) break;
+
+        if (!requestActive && !rxAvailable) {
             if (idleMs >= SERVICE_IDLE_TIMEOUT_MS) break;
             AudioMoth_delay(10);
             idleMs += 10;
+            serviceMs += 10;
             continue;
         }
 
@@ -427,6 +435,7 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
             handleCommand(deadlineUnixSeconds);
         } else {
             idleMs += RX_LINE_TIMEOUT_MS;
+            serviceMs += RX_LINE_TIMEOUT_MS;
         }
     }
 
