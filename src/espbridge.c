@@ -59,10 +59,12 @@
 
 #define RX_LINE_TIMEOUT_MS                  250
 #define SERVICE_IDLE_TIMEOUT_MS             3000
+#define SERVICE_MAX_WINDOW_MS               30000
 
 static volatile bool bridgeBusy = true;
 static volatile bool uploadAllowed = false;
 static bool filesystemEnabled = false;
+static bool serviceActive = false;
 
 static char lineBuffer[ESPBRIDGE_MAX_LINE];
 static uint8_t chunkBuffer[ESPBRIDGE_CHUNK_BYTES];
@@ -390,15 +392,28 @@ void ESPBridge_init(void) {
     bridgeBusy = true;
     uploadAllowed = false;
     filesystemEnabled = false;
+    serviceActive = false;
 }
 
 void ESPBridge_setBusy(bool busy) {
     bridgeBusy = busy;
     gpioWrite(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, busy);
+
+    if (!busy && ESPBridge_isRequestActive() && !serviceActive) {
+        uint32_t now, ms;
+        AudioMoth_getTime(&now, &ms);
+        ESPBridge_serviceUntil(now + 1);
+    }
 }
 
 void ESPBridge_setUploadAllowed(bool allowed) {
     uploadAllowed = allowed;
+
+    if (allowed && !bridgeBusy && ESPBridge_isRequestActive() && !serviceActive) {
+        uint32_t now, ms;
+        AudioMoth_getTime(&now, &ms);
+        ESPBridge_serviceUntil(now + 1);
+    }
 }
 
 bool ESPBridge_isRequestActive(void) {
@@ -406,19 +421,28 @@ bool ESPBridge_isRequestActive(void) {
 }
 
 void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
-    if (bridgeBusy) return;
-    if (deadlineReached(deadlineUnixSeconds)) return;
+    if (bridgeBusy || serviceActive) return;
+
+    serviceActive = true;
 
     uint32_t idleMs = 0;
+    uint32_t serviceMs = 0;
     sendLine("OK BRIDGE_READY");
 
-    while (!deadlineReached(deadlineUnixSeconds)) {
+    while (serviceMs < SERVICE_MAX_WINDOW_MS) {
         WDOG_Feed();
 
-        if (!ESPBridge_isRequestActive() && !uartRxAvailable()) {
+        bool deadlineDone = deadlineReached(deadlineUnixSeconds);
+        bool requestActive = ESPBridge_isRequestActive();
+        bool rxAvailable = uartRxAvailable();
+
+        if (deadlineDone && !requestActive && !rxAvailable) break;
+
+        if (!requestActive && !rxAvailable) {
             if (idleMs >= SERVICE_IDLE_TIMEOUT_MS) break;
             AudioMoth_delay(10);
             idleMs += 10;
+            serviceMs += 10;
             continue;
         }
 
@@ -427,8 +451,10 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
             handleCommand(deadlineUnixSeconds);
         } else {
             idleMs += RX_LINE_TIMEOUT_MS;
+            serviceMs += RX_LINE_TIMEOUT_MS;
         }
     }
 
     sendLine("OK BRIDGE_SLEEP");
+    serviceActive = false;
 }
