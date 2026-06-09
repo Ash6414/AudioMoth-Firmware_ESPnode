@@ -39,18 +39,12 @@
 #define BRIDGE_REQ_PORT                     gpioPortA    /* a7, ESP output to AudioMoth */
 #define BRIDGE_REQ_PIN                      7
 
-/* Prototype mode: do not let a PA7 read issue prevent UART service from running. */
-#define BRIDGE_REQUIRE_REQ_PIN              0
+#define BRIDGE_REQUIRE_REQ_PIN              1
 
 #define RX_LINE_TIMEOUT_MS                  250
 #define SERVICE_IDLE_TIMEOUT_MS             3000
 #define SERVICE_MAX_WINDOW_MS               30000
-#define SERVICE_DEBUG_PULSE_MS              150
-#define SERVICE_READY_FLOOD_LINES           40
-#define SERVICE_READY_FLOOD_GAP_MS          20
-#define SERVICE_READY_REPEAT_MS             500
 #define MILLISECONDS_PER_SECOND             1000
-#define MICROSECONDS_PER_SECOND             1000000
 
 static volatile bool bridgeBusy = true;
 static volatile bool uploadAllowed = false;
@@ -127,29 +121,6 @@ static inline void gpioWrite(GPIO_Port_TypeDef port, unsigned int pin, bool valu
     }
 }
 
-static void pulsePin(GPIO_Port_TypeDef port, unsigned int pin, bool idleHigh, uint32_t count) {
-    GPIO_PinModeSet(port, pin, gpioModePushPull, idleHigh ? 1 : 0);
-
-    for (uint32_t i = 0; i < count; i += 1) {
-        gpioWrite(port, pin, !idleHigh);
-        AudioMoth_delay(SERVICE_DEBUG_PULSE_MS);
-        gpioWrite(port, pin, idleHigh);
-        AudioMoth_delay(SERVICE_DEBUG_PULSE_MS);
-    }
-}
-
-static void pulseBusyDebug(void) {
-    /* Visible on ESP GPIO26; proves ESPBridge_serviceUntil() was entered. */
-    pulsePin(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, false, 3);
-    gpioWrite(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, false);
-}
-
-static void pulseTxPinDebug(void) {
-    /* Visible on ESP GPIO16 if b9 really reaches the ESP RX input. */
-    pulsePin(BRIDGE_TX_PORT, BRIDGE_TX_PIN, true, 3);
-    GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
-}
-
 static inline bool rawRequestPinActive(void) {
     return GPIO_PinInGet(BRIDGE_REQ_PORT, BRIDGE_REQ_PIN) != 0;
 }
@@ -201,13 +172,6 @@ static void sendLine(const char *fmt, ...) {
     if ((uint32_t)n >= sizeof(out)) n = sizeof(out) - 1;
     uartWrite(out, (uint32_t)n);
     uartWrite("\n", 1);
-}
-
-static void floodReadyLine(void) {
-    for (uint32_t i = 0; i < SERVICE_READY_FLOOD_LINES; i += 1) {
-        sendLine("OK BRIDGE_READY");
-        bridgeDelayMilliseconds(SERVICE_READY_FLOOD_GAP_MS);
-    }
 }
 
 /* Returns true when a complete line was read. CR is ignored. */
@@ -467,11 +431,10 @@ static void commandTime(char *args) {
 static void commandStatus(uint32_t deadlineUnixSeconds) {
     uint32_t now, ms;
     AudioMoth_getTime(&now, &ms);
-    sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu",
+    sendLine("OK STATUS busy=%u allowed=%u req=%u now=%lu ms=%lu deadline=%lu",
              bridgeBusy ? 1 : 0,
              uploadAllowed ? 1 : 0,
              ESPBridge_isRequestActive() ? 1 : 0,
-             rawRequestPinActive() ? 1 : 0,
              (unsigned long)now,
              (unsigned long)ms,
              (unsigned long)deadlineUnixSeconds);
@@ -541,27 +504,17 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     uint32_t serviceStartSeconds, serviceStartMilliseconds;
     AudioMoth_getTime(&serviceStartSeconds, &serviceStartMilliseconds);
 
-    pulseBusyDebug();
-    pulseTxPinDebug();
     configureBridgeUart();
-
-    floodReadyLine();
-    uint32_t lastReadyMs = elapsedServiceMilliseconds(serviceStartSeconds, serviceStartMilliseconds);
+    sendLine("OK BRIDGE_READY");
 
     while (elapsedServiceMilliseconds(serviceStartSeconds, serviceStartMilliseconds) < SERVICE_MAX_WINDOW_MS) {
         WDOG_Feed();
 
-        uint32_t serviceElapsedMs = elapsedServiceMilliseconds(serviceStartSeconds, serviceStartMilliseconds);
         bool deadlineDone = deadlineReached(deadlineUnixSeconds);
         bool requestActive = rawRequestPinActive();
         bool rxAvailable = uartRxAvailable();
 
         if (deadlineDone && !requestActive && !rxAvailable) break;
-
-        if (!rxAvailable && serviceElapsedMs - lastReadyMs >= SERVICE_READY_REPEAT_MS) {
-            sendLine("OK BRIDGE_READY");
-            lastReadyMs = serviceElapsedMs;
-        }
 
         if (!requestActive && !rxAvailable) {
             if (idleMs >= SERVICE_IDLE_TIMEOUT_MS) break;
