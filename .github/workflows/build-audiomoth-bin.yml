@@ -64,6 +64,7 @@ jobs:
             firmware/inc/digitalfilter.h
             firmware/inc/gps.h
             firmware/tools/apply-espbridge-request-service.py
+            firmware/tools/apply-espbridge-optional-request.py
           )
 
           for file in "${required_files[@]}"; do
@@ -123,6 +124,14 @@ jobs:
           grep -n 'ESP32 request service' project/src/main.c
           grep -n 'uploadServiceAllowed' project/src/main.c
 
+      - name: Apply optional ESP request gate patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 firmware/tools/apply-espbridge-optional-request.py
+          grep -n '#define BRIDGE_REQUIRE_REQ_PIN              0' project/src/espbridge.c
+          grep -n 'bool requestActive = ESPBridge_isRequestActive();' project/src/espbridge.c
+
       - name: Configure AudioMoth Makefile for CI
         shell: bash
         run: |
@@ -171,7 +180,7 @@ jobs:
             echo "firmware_description=AudioMoth-Firmware-Basic"
             echo "firmware_version=1.12.0"
             echo "espbridge_baud=9600"
-            echo "espbridge_request_service=startup_and_scheduler_request_windows"
+            echo "espbridge_request_service=startup_scheduler_optional_req_windows"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt
 
