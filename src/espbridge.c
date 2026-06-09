@@ -46,6 +46,8 @@
 #define SERVICE_IDLE_TIMEOUT_MS             3000
 #define SERVICE_MAX_WINDOW_MS               30000
 #define SERVICE_DEBUG_PULSE_MS              150
+#define SERVICE_READY_FLOOD_LINES           40
+#define SERVICE_READY_FLOOD_GAP_MS          20
 #define MILLISECONDS_PER_SECOND             1000
 #define MICROSECONDS_PER_SECOND             1000000
 
@@ -198,6 +200,13 @@ static void sendLine(const char *fmt, ...) {
     if ((uint32_t)n >= sizeof(out)) n = sizeof(out) - 1;
     uartWrite(out, (uint32_t)n);
     uartWrite("\n", 1);
+}
+
+static void floodReadyLine(void) {
+    for (uint32_t i = 0; i < SERVICE_READY_FLOOD_LINES; i += 1) {
+        sendLine("OK BRIDGE_READY");
+        bridgeDelayMilliseconds(SERVICE_READY_FLOOD_GAP_MS);
+    }
 }
 
 /* Returns true when a complete line was read. CR is ignored. */
@@ -535,7 +544,7 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     pulseTxPinDebug();
     configureBridgeUart();
 
-    sendLine("OK BRIDGE_READY");
+    floodReadyLine();
 
     while (elapsedServiceMilliseconds(serviceStartSeconds, serviceStartMilliseconds) < SERVICE_MAX_WINDOW_MS) {
         WDOG_Feed();
