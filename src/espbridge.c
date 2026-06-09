@@ -23,7 +23,7 @@
 #include "audiomoth.h"
 #include "espbridge.h"
 
-/* AudioMoth Dev left JST header. The b9/b10 U1 pins are UART1 route location 2. */
+/* AudioMoth Dev left JST header. UART1 LOC2 is PB9 TX and PB10 RX. */
 #define BRIDGE_UART                         UART1
 #define BRIDGE_UART_CLOCK                   cmuClock_UART1
 #define BRIDGE_UART_LOCATION                UART_ROUTE_LOCATION_LOC2
@@ -44,6 +44,7 @@
 #define RX_LINE_TIMEOUT_MS                  250
 #define SERVICE_IDLE_TIMEOUT_MS             3000
 #define SERVICE_MAX_WINDOW_MS               30000
+#define SERVICE_DEBUG_PULSE_MS              150
 #define MILLISECONDS_PER_SECOND             1000
 
 static volatile bool bridgeBusy = true;
@@ -62,6 +63,32 @@ static inline void gpioWrite(GPIO_Port_TypeDef port, unsigned int pin, bool valu
     } else {
         GPIO_PinOutClear(port, pin);
     }
+}
+
+static void pulsePin(GPIO_Port_TypeDef port, unsigned int pin, bool idleHigh, uint32_t count) {
+    GPIO_PinModeSet(port, pin, gpioModePushPull, idleHigh ? 1 : 0);
+
+    for (uint32_t i = 0; i < count; i += 1) {
+        gpioWrite(port, pin, !idleHigh);
+        AudioMoth_delay(SERVICE_DEBUG_PULSE_MS);
+        gpioWrite(port, pin, idleHigh);
+        AudioMoth_delay(SERVICE_DEBUG_PULSE_MS);
+    }
+}
+
+static void pulseBusyDebug(void) {
+    /* Visible on ESP GPIO26; proves ESPBridge_serviceUntil() was entered. */
+    pulsePin(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, false, 3);
+    gpioWrite(BRIDGE_BUSY_PORT, BRIDGE_BUSY_PIN, false);
+}
+
+static void pulseTxPinDebug(void) {
+    /* Visible on ESP GPIO16 if b9 really reaches the ESP RX input. */
+    uint32_t route = BRIDGE_UART->ROUTE;
+    BRIDGE_UART->ROUTE = route & ~UART_ROUTE_TXPEN;
+    pulsePin(BRIDGE_TX_PORT, BRIDGE_TX_PIN, true, 3);
+    GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
+    BRIDGE_UART->ROUTE = route;
 }
 
 static inline bool rawRequestPinActive(void) {
@@ -440,13 +467,16 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     uint32_t serviceStartSeconds, serviceStartMilliseconds;
     AudioMoth_getTime(&serviceStartSeconds, &serviceStartMilliseconds);
 
+    pulseBusyDebug();
+    pulseTxPinDebug();
+
     sendLine("OK BRIDGE_READY");
 
     while (elapsedServiceMilliseconds(serviceStartSeconds, serviceStartMilliseconds) < SERVICE_MAX_WINDOW_MS) {
         WDOG_Feed();
 
         bool deadlineDone = deadlineReached(deadlineUnixSeconds);
-        bool requestActive = ESPBridge_isRequestActive();
+        bool requestActive = rawRequestPinActive();
         bool rxAvailable = uartRxAvailable();
 
         if (deadlineDone && !requestActive && !rxAvailable) break;
