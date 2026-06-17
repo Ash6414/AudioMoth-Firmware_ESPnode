@@ -133,6 +133,9 @@ jobs:
           python3 firmware/tools/apply-espbridge-optional-request.py
           grep -n '#define BRIDGE_REQUIRE_REQ_PIN              0' project/src/espbridge.c
           grep -n 'bool requestActive = ESPBridge_isRequestActive();' project/src/espbridge.c
+          grep -n 'fileCommandsAllowed' project/src/espbridge.c
+          grep -n 'INFO ENTRY' project/src/espbridge.c
+          grep -n 'SKIP_CONFIG' project/src/espbridge.c
 
       - name: Apply repeated READY beacon patch
         shell: bash
@@ -191,7 +194,7 @@ jobs:
             echo "firmware_description=AudioMoth-Firmware-Basic"
             echo "firmware_version=1.12.0"
             echo "espbridge_baud=9600"
-            echo "espbridge_request_service=polished_transfer_ready_beacon_optional_hold_extensionless_wav"
+            echo "espbridge_request_service=idle_file_service_any_sd_file_skip_config"
             echo "espbridge_max_session_seconds=7200"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt
