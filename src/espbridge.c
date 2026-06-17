@@ -39,11 +39,12 @@
 #define BRIDGE_REQ_PORT                     gpioPortA    /* a7, ESP output to AudioMoth */
 #define BRIDGE_REQ_PIN                      7
 
-#define BRIDGE_REQUIRE_REQ_PIN              1
+#define BRIDGE_REQUIRE_REQ_PIN              0
 
 #define RX_LINE_TIMEOUT_MS                  250
 #define SERVICE_IDLE_TIMEOUT_MS             3000
-#define SERVICE_MAX_WINDOW_MS               30000
+#define SERVICE_MAX_WINDOW_MS               7200000
+#define SERVICE_READY_BEACON_MS             1000
 #define MILLISECONDS_PER_SECOND             1000
 
 static volatile bool bridgeBusy = true;
@@ -227,6 +228,16 @@ static bool endsWithWav(const char *path) {
            dot[4] == 0;
 }
 
+static bool basenameHasExtension(const char *path) {
+    const char *slash = strrchr(path, '/');
+    const char *name = slash == NULL ? path : slash + 1;
+    return strchr(name, '.') != NULL;
+}
+
+static bool pathMayBeAudioFile(const char *path) {
+    return endsWithWav(path) || !basenameHasExtension(path);
+}
+
 static bool validPath(const char *path, bool requireWav) {
     uint32_t len = strlen(path);
     if (len == 0 || len >= ESPBRIDGE_MAX_PATH) return false;
@@ -239,7 +250,7 @@ static bool validPath(const char *path, bool requireWav) {
         if (!ok) return false;
     }
 
-    if (requireWav && !endsWithWav(path)) return false;
+    if (requireWav && !pathMayBeAudioFile(path)) return false;
     return true;
 }
 
@@ -278,6 +289,25 @@ static uint32_t elapsedServiceMilliseconds(uint32_t startSeconds, uint32_t start
 
 /* ---------------- File operations ---------------- */
 
+static bool fileLooksLikeWav(const char *path) {
+    if (endsWithWav(path)) return true;
+    if (basenameHasExtension(path)) return false;
+
+    FIL file;
+    FRESULT res = f_open(&file, path, FA_READ);
+    if (res != FR_OK) return false;
+
+    uint8_t header[12];
+    UINT bytesRead = 0;
+    res = f_read(&file, header, sizeof(header), &bytesRead);
+    f_close(&file);
+
+    if (res != FR_OK || bytesRead != sizeof(header)) return false;
+
+    return header[0] == 'R' && header[1] == 'I' && header[2] == 'F' && header[3] == 'F' &&
+           header[8] == 'W' && header[9] == 'A' && header[10] == 'V' && header[11] == 'E';
+}
+
 static void listOneDirectory(const char *prefix) {
     DIR dir;
     FILINFO fno;
@@ -302,15 +332,17 @@ static void listOneDirectory(const char *prefix) {
                 while (true) {
                     FRESULT subres = f_readdir(&subdir, &subfno);
                     if (subres != FR_OK || subfno.fname[0] == 0) break;
-                    if ((subfno.fattrib & AM_DIR) == 0 && endsWithWav(subfno.fname)) {
+                    if ((subfno.fattrib & AM_DIR) == 0) {
                         char full[ESPBRIDGE_MAX_PATH];
                         snprintf(full, sizeof(full), "%s/%s", nested, subfno.fname);
-                        sendLine("FILE %s %lu", full, (unsigned long)subfno.fsize);
+                        if (fileLooksLikeWav(full)) {
+                            sendLine("FILE %s %lu", full, (unsigned long)subfno.fsize);
+                        }
                     }
                 }
                 f_closedir(&subdir);
             }
-        } else if (endsWithWav(fno.fname)) {
+        } else if (fileLooksLikeWav(fno.fname)) {
             sendLine("FILE %s %lu", fno.fname, (unsigned long)fno.fsize);
         }
     }
@@ -431,10 +463,11 @@ static void commandTime(char *args) {
 static void commandStatus(uint32_t deadlineUnixSeconds) {
     uint32_t now, ms;
     AudioMoth_getTime(&now, &ms);
-    sendLine("OK STATUS busy=%u allowed=%u req=%u now=%lu ms=%lu deadline=%lu",
+    sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu",
              bridgeBusy ? 1 : 0,
              uploadAllowed ? 1 : 0,
              ESPBridge_isRequestActive() ? 1 : 0,
+             rawRequestPinActive() ? 1 : 0,
              (unsigned long)now,
              (unsigned long)ms,
              (unsigned long)deadlineUnixSeconds);
@@ -501,6 +534,7 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     serviceActive = true;
 
     uint32_t idleMs = 0;
+    uint32_t readyBeaconMs = 0;
     uint32_t serviceStartSeconds, serviceStartMilliseconds;
     AudioMoth_getTime(&serviceStartSeconds, &serviceStartMilliseconds);
 
@@ -525,9 +559,15 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
 
         if (readLine(RX_LINE_TIMEOUT_MS)) {
             idleMs = 0;
+            readyBeaconMs = 0;
             if (handleCommand(deadlineUnixSeconds)) break;
         } else {
             idleMs += RX_LINE_TIMEOUT_MS;
+            readyBeaconMs += RX_LINE_TIMEOUT_MS;
+            if (readyBeaconMs >= SERVICE_READY_BEACON_MS) {
+                sendLine("OK BRIDGE_READY");
+                readyBeaconMs = 0;
+            }
         }
     }
 
