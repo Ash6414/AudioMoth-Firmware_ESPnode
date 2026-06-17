@@ -14,10 +14,16 @@ from pathlib import Path
 
 BRIDGE_C = Path("project/src/espbridge.c")
 
+OLD_INCLUDE = """#include \"em_timer.h\"\n#include \"em_usart.h\"\n#include \"em_wdog.h\"\n"""
+
+NEW_INCLUDE = """#include \"em_timer.h\"\n#include \"em_usart.h\"\n#include \"em_usbtimer.h\"\n#include \"em_wdog.h\"\n"""
+
 BLOCK_START = "static void configureBridgePins(void) {"
 BLOCK_END = "\n/* ---------------- CRC and validation ---------------- */"
 
-NEW_UART_BLOCK = r'''static void configureBridgePins(void) {
+NEW_UART_BLOCK = r'''#define UART_RX_POLL_US                    50
+
+static void configureBridgePins(void) {
     CMU_ClockEnable(cmuClock_GPIO, true);
     GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
     GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
@@ -103,9 +109,10 @@ static void sendLine(const char *fmt, ...) {
 /* Returns true when a complete line was read. CR is ignored. */
 static bool readLine(uint32_t timeoutMs) {
     uint32_t index = 0;
-    uint32_t elapsedMs = 0;
+    uint32_t elapsedUs = 0;
+    uint32_t timeoutUs = timeoutMs * 1000UL;
 
-    while (elapsedMs < timeoutMs && index < ESPBRIDGE_MAX_LINE - 1) {
+    while (elapsedUs < timeoutUs && index < ESPBRIDGE_MAX_LINE - 1) {
         WDOG_Feed();
 
         uint8_t byte;
@@ -118,8 +125,8 @@ static bool readLine(uint32_t timeoutMs) {
             }
             lineBuffer[index++] = c;
         } else {
-            AudioMoth_delay(1);
-            elapsedMs += 1;
+            USBTIMER_DelayUs(UART_RX_POLL_US);
+            elapsedUs += UART_RX_POLL_US;
         }
     }
 
@@ -154,11 +161,14 @@ def replace_uart_block(text: str) -> tuple[str, bool]:
 
 def main() -> None:
     text = BRIDGE_C.read_text(encoding="utf-8")
+    text, include_changed = replace_once(text, OLD_INCLUDE, NEW_INCLUDE, "USBTIMER include")
     text, block_changed = replace_uart_block(text)
     text, stop_changed = replace_once(text, "    stopSoftUartTimer();", "    stopBridgeUart();", "UART stop call")
     BRIDGE_C.write_text(text, encoding="utf-8")
 
     changed = []
+    if include_changed:
+        changed.append("USBTIMER include")
     if block_changed:
         changed.append("hardware UART block")
     if stop_changed:
