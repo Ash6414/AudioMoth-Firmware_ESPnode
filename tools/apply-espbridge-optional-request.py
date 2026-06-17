@@ -6,7 +6,9 @@ alive when PA7 is not being sampled correctly. For the transfer prototype, file
 commands are allowed whenever the AudioMoth bridge service is active and the
 firmware is not busy recording, instead of waiting for the scheduler's separate
 uploadAllowed flag. LIST walks a few folder levels, emits INFO ENTRY lines for
-all visible entries, and exposes any regular file except CONFIG.TXT.
+all visible entries, and exposes any regular file except CONFIG.TXT. Raw FatFs
+LIST/GET/DELETE operations keep the SD card clock powered while touching the
+card, matching the stock AudioMoth filesystem helpers.
 """
 
 from __future__ import annotations
@@ -66,6 +68,14 @@ NEW_ENSURE_FILESYSTEM = """static bool ensureFilesystem(void) {
 static bool fileCommandsAllowed(void) {
     return !bridgeBusy && serviceActive;
 }
+
+static void rawFilesystemBegin(void) {
+    AudioMoth_restartSDCardClock();
+}
+
+static void rawFilesystemEnd(void) {
+    AudioMoth_pauseSDCardClock();
+}
 """
 
 OLD_FILE_GATE = "    if (bridgeBusy || !uploadAllowed) {"
@@ -76,6 +86,9 @@ NEW_STATUS_ALLOWED = "             fileCommandsAllowed() ? 1 : 0,"
 
 LIST_FUNCTION_START = "static void listOneDirectory(const char *prefix) {"
 LIST_FUNCTION_END = "static void commandList(void) {"
+COMMAND_GET_START = "static void commandGet(char *args) {"
+COMMAND_DELETE_START = "static void commandDelete(char *args) {"
+COMMAND_TIME_START = "static void commandTime(char *args) {"
 
 NEW_LIST_FUNCTION = r'''#define LIST_MAX_DEPTH 4
 
@@ -130,7 +143,110 @@ static void listDirectoryRecursive(const char *prefix, uint32_t depth) {
 }
 
 static void listOneDirectory(const char *prefix) {
+    rawFilesystemBegin();
     listDirectoryRecursive(prefix, 0);
+    rawFilesystemEnd();
+}
+
+'''
+
+NEW_COMMAND_GET = r'''static void commandGet(char *args) {
+    char path[ESPBRIDGE_MAX_PATH];
+    unsigned long offset = 0;
+    unsigned long requested = ESPBRIDGE_CHUNK_BYTES;
+
+    if (!fileCommandsAllowed()) {
+        sendLine("ERR BUSY upload_not_allowed");
+        return;
+    }
+    if (sscanf(args, "%95s %lu %lu", path, &offset, &requested) < 2) {
+        sendLine("ERR ARG usage_GET_path_offset_maxbytes");
+        return;
+    }
+    if (!validPath(path, true)) {
+        sendLine("ERR PATH invalid_path");
+        return;
+    }
+    if (requested == 0 || requested > ESPBRIDGE_CHUNK_BYTES) requested = ESPBRIDGE_CHUNK_BYTES;
+    if (!ensureFilesystem()) {
+        sendLine("ERR SD filesystem_enable_failed");
+        return;
+    }
+
+    rawFilesystemBegin();
+
+    FIL file;
+    FRESULT res = f_open(&file, path, FA_READ);
+    if (res != FR_OK) {
+        rawFilesystemEnd();
+        sendLine("ERR OPEN %u", (unsigned int)res);
+        return;
+    }
+
+    FSIZE_t size = f_size(&file);
+    if ((FSIZE_t)offset > size) {
+        f_close(&file);
+        rawFilesystemEnd();
+        sendLine("ERR RANGE offset_past_eof");
+        return;
+    }
+
+    res = f_lseek(&file, (FSIZE_t)offset);
+    if (res != FR_OK) {
+        f_close(&file);
+        rawFilesystemEnd();
+        sendLine("ERR SEEK %u", (unsigned int)res);
+        return;
+    }
+
+    UINT bytesRead = 0;
+    res = f_read(&file, chunkBuffer, (UINT)requested, &bytesRead);
+    FRESULT closeRes = f_close(&file);
+    rawFilesystemEnd();
+
+    if (res != FR_OK) {
+        sendLine("ERR READ %u", (unsigned int)res);
+        return;
+    }
+    if (closeRes != FR_OK) {
+        sendLine("ERR CLOSE %u", (unsigned int)closeRes);
+        return;
+    }
+
+    uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
+    sendLine("DATA %s %lu %u %08lX", path, offset, (unsigned int)bytesRead, (unsigned long)crc);
+    uartWrite(chunkBuffer, bytesRead);
+}
+
+'''
+
+NEW_COMMAND_DELETE = r'''static void commandDelete(char *args) {
+    char path[ESPBRIDGE_MAX_PATH];
+
+    if (!fileCommandsAllowed()) {
+        sendLine("ERR BUSY upload_not_allowed");
+        return;
+    }
+
+    if (sscanf(args, "%95s", path) != 1) {
+        sendLine("ERR ARG usage_DELETE_path");
+        return;
+    }
+    if (!validPath(path, true)) {
+        sendLine("ERR PATH invalid_path");
+        return;
+    }
+    if (!ensureFilesystem()) {
+        sendLine("ERR SD filesystem_enable_failed");
+        return;
+    }
+
+    rawFilesystemBegin();
+    FRESULT res = f_unlink(path);
+    rawFilesystemEnd();
+
+    if (res == FR_OK) sendLine("OK DELETE %s", path);
+    else sendLine("ERR DELETE %u", (unsigned int)res);
 }
 
 '''
@@ -154,7 +270,7 @@ def replace_all(text: str, old: str, new: str, label: str, minimum: int) -> tupl
 
 
 def replace_between(text: str, start: str, end: str, new: str, label: str) -> tuple[str, bool]:
-    if "static void listDirectoryRecursive" in text and "SKIP_CONFIG" in text:
+    if "static void listDirectoryRecursive" in text and "SKIP_CONFIG" in text and "rawFilesystemBegin();" in text:
         return text, False
     start_index = text.find(start)
     if start_index < 0:
@@ -162,6 +278,19 @@ def replace_between(text: str, start: str, end: str, new: str, label: str) -> tu
     end_index = text.find(end, start_index)
     if end_index < 0:
         raise SystemExit(f"Could not find ESP bridge {label} end text to patch")
+    return text[:start_index] + new + text[end_index:], True
+
+
+def replace_function(text: str, start: str, end: str, new: str, label: str, marker: str) -> tuple[str, bool]:
+    start_index = text.find(start)
+    if start_index < 0:
+        raise SystemExit(f"Could not find ESP bridge {label} start text to patch")
+    end_index = text.find(end, start_index)
+    if end_index < 0:
+        raise SystemExit(f"Could not find ESP bridge {label} end text to patch")
+    block = text[start_index:end_index]
+    if marker in block:
+        return text, False
     return text[:start_index] + new + text[end_index:], True
 
 
@@ -175,6 +304,8 @@ def main() -> None:
     text, gate_count = replace_all(text, OLD_FILE_GATE, NEW_FILE_GATE, "file-command gate", 3)
     text, status_changed = replace_once(text, OLD_STATUS_ALLOWED, NEW_STATUS_ALLOWED, "STATUS allowed flag")
     text, list_changed = replace_between(text, LIST_FUNCTION_START, LIST_FUNCTION_END, NEW_LIST_FUNCTION, "recursive LIST")
+    text, get_changed = replace_function(text, COMMAND_GET_START, COMMAND_DELETE_START, NEW_COMMAND_GET, "powered GET", "rawFilesystemBegin();")
+    text, delete_changed = replace_function(text, COMMAND_DELETE_START, COMMAND_TIME_START, NEW_COMMAND_DELETE, "powered DELETE", "rawFilesystemBegin();")
     BRIDGE_C.write_text(text, encoding="utf-8")
 
     if require_changed:
@@ -198,9 +329,9 @@ def main() -> None:
         print("ESP GET/DELETE config path guard patch already applied")
 
     if helper_changed:
-        print("Applied ESP idle file-command helper patch")
+        print("Applied ESP idle file-command helper and SD power patch")
     else:
-        print("ESP idle file-command helper patch already applied")
+        print("ESP idle file-command helper and SD power patch already applied")
 
     if gate_count:
         print(f"Applied ESP idle file-command gate patch to {gate_count} command handlers")
@@ -216,6 +347,16 @@ def main() -> None:
         print("Applied ESP recursive any-file SD LIST diagnostics patch")
     else:
         print("ESP recursive any-file SD LIST diagnostics patch already applied")
+
+    if get_changed:
+        print("Applied ESP powered SD GET patch")
+    else:
+        print("ESP powered SD GET patch already applied")
+
+    if delete_changed:
+        print("Applied ESP powered SD DELETE patch")
+    else:
+        print("ESP powered SD DELETE patch already applied")
 
 
 if __name__ == "__main__":
