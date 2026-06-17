@@ -16,7 +16,7 @@
 #define ESPBRIDGE_DEFAULT_BAUD              115200
 #define ESPBRIDGE_MAX_LINE                  160
 #define ESPBRIDGE_MAX_PATH                  96
-#define ESPBRIDGE_CHUNK_BYTES               512
+#define ESPBRIDGE_CHUNK_BYTES               4096
 #define ESPBRIDGE_UPLOAD_GUARD_SECONDS      300
 
 void ESPBridge_init(void);
