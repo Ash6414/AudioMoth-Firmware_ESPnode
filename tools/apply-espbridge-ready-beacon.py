@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Patch AudioMoth ESP bridge to repeat READY while the UART service is idle.
+"""Patch AudioMoth ESP bridge for transfer-ready service windows.
 
-This is a bring-up aid for the ESP32 bridge: instead of one READY line at the
-start of a service window, AudioMoth emits READY periodically so the ESP32 can
-catch the bridge even after Wi-Fi/server startup delays.
+AudioMoth emits READY periodically so the ESP32 can catch the bridge even after
+Wi-Fi/server startup delays. The service cap is long enough for real WAV chunk
+transfer while ESP_REQ is held high.
 """
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ BRIDGE_C = Path("project/src/espbridge.c")
 REPLACEMENTS = [
     (
         "#define SERVICE_MAX_WINDOW_MS               30000",
-        "#define SERVICE_MAX_WINDOW_MS               120000",
+        "#define SERVICE_MAX_WINDOW_MS               7200000",
         "service max window",
     ),
     (
         "#define MILLISECONDS_PER_SECOND             1000",
-        "#define MILLISECONDS_PER_SECOND             1000\n#define SERVICE_READY_BEACON_MS            1000",
+        "#define SERVICE_READY_BEACON_MS             1000\n#define MILLISECONDS_PER_SECOND             1000",
         "ready beacon constant",
     ),
     (
@@ -39,6 +39,8 @@ REPLACEMENTS = [
 def replace_once(text: str, old: str, new: str, label: str) -> tuple[str, bool]:
     if new in text:
         return text, False
+    if label == "service max window" and "#define SERVICE_MAX_WINDOW_MS               120000" in text:
+        return text.replace("#define SERVICE_MAX_WINDOW_MS               120000", new, 1), True
     if old not in text:
         raise SystemExit(f"Could not find ESP bridge {label} text to patch")
     return text.replace(old, new, 1), True
