@@ -14,14 +14,12 @@ from pathlib import Path
 
 BRIDGE_C = Path("project/src/espbridge.c")
 
-OLD_INCLUDE = """#include \"em_timer.h\"\n#include \"em_usart.h\"\n#include \"em_wdog.h\"\n"""
-
-NEW_INCLUDE = """#include \"em_timer.h\"\n#include \"em_usart.h\"\n#include \"em_usbtimer.h\"\n#include \"em_wdog.h\"\n"""
-
 BLOCK_START = "static void configureBridgePins(void) {"
 BLOCK_END = "\n/* ---------------- CRC and validation ---------------- */"
 
 NEW_UART_BLOCK = r'''#define UART_RX_POLL_US                    50
+
+static uint32_t uartPollTicksPerMicrosecond = 1;
 
 static void configureBridgePins(void) {
     CMU_ClockEnable(cmuClock_GPIO, true);
@@ -29,8 +27,41 @@ static void configureBridgePins(void) {
     GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
 }
 
+static void startUartPollTimer(void) {
+    CMU_ClockEnable(cmuClock_TIMER1, true);
+    TIMER_Reset(TIMER1);
+
+    TIMER_Init_TypeDef timerInit = TIMER_INIT_DEFAULT;
+    timerInit.enable = false;
+    timerInit.prescale = timerPrescale1;
+
+    TIMER_Init(TIMER1, &timerInit);
+    TIMER_TopSet(TIMER1, UINT16_MAX);
+    TIMER_CounterSet(TIMER1, 0);
+    TIMER_Enable(TIMER1, true);
+
+    uint32_t timerFrequency = CMU_ClockFreqGet(cmuClock_TIMER1);
+    uartPollTicksPerMicrosecond = (timerFrequency + 500000UL) / 1000000UL;
+    if (uartPollTicksPerMicrosecond == 0) uartPollTicksPerMicrosecond = 1;
+}
+
+static void stopUartPollTimer(void) {
+    TIMER_Enable(TIMER1, false);
+    TIMER_Reset(TIMER1);
+    CMU_ClockEnable(cmuClock_TIMER1, false);
+    uartPollTicksPerMicrosecond = 1;
+}
+
+static void bridgeDelayMicroseconds(uint32_t microseconds) {
+    uint32_t ticks = microseconds * uartPollTicksPerMicrosecond;
+    uint16_t start = (uint16_t)TIMER_CounterGet(TIMER1);
+    while ((uint16_t)(TIMER_CounterGet(TIMER1) - start) < ticks) {
+    }
+}
+
 static void configureBridgeUart(void) {
     configureBridgePins();
+    startUartPollTimer();
 
     NVIC_DisableIRQ(UART1_RX_IRQn);
     NVIC_ClearPendingIRQ(UART1_RX_IRQn);
@@ -54,6 +85,7 @@ static void stopBridgeUart(void) {
     CMU_ClockEnable(BRIDGE_UART_CLOCK, false);
     GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
     GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
+    stopUartPollTimer();
 }
 
 static void bridgeDelayMilliseconds(uint32_t milliseconds) {
@@ -125,7 +157,7 @@ static bool readLine(uint32_t timeoutMs) {
             }
             lineBuffer[index++] = c;
         } else {
-            USBTIMER_DelayUs(UART_RX_POLL_US);
+            bridgeDelayMicroseconds(UART_RX_POLL_US);
             elapsedUs += UART_RX_POLL_US;
         }
     }
@@ -161,14 +193,11 @@ def replace_uart_block(text: str) -> tuple[str, bool]:
 
 def main() -> None:
     text = BRIDGE_C.read_text(encoding="utf-8")
-    text, include_changed = replace_once(text, OLD_INCLUDE, NEW_INCLUDE, "USBTIMER include")
     text, block_changed = replace_uart_block(text)
     text, stop_changed = replace_once(text, "    stopSoftUartTimer();", "    stopBridgeUart();", "UART stop call")
     BRIDGE_C.write_text(text, encoding="utf-8")
 
     changed = []
-    if include_changed:
-        changed.append("USBTIMER include")
     if block_changed:
         changed.append("hardware UART block")
     if stop_changed:
