@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""Patch ESPBridge to use AudioMoth UART1 hardware on PB9/PB10.
+
+The first bridge prototype bit-banged UART with TIMER1. That works only at very
+low baud rates and produced corrupted READY lines at 115200. AudioMoth-Project
+already routes the GPS UART through UART1 LOC2 with RX on PB10; LOC2 also gives
+TX on PB9. This patch replaces the software-UART primitives with polled UART1
+hardware while leaving the higher-level bridge protocol untouched.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+BRIDGE_C = Path("project/src/espbridge.c")
+
+OLD_INCLUDE = """#include \"em_timer.h\"\n#include \"em_usart.h\"\n#include \"em_wdog.h\"\n"""
+
+NEW_INCLUDE = """#include \"em_timer.h\"\n#include \"em_usart.h\"\n#include \"em_usbtimer.h\"\n#include \"em_wdog.h\"\n"""
+
+BLOCK_START = "static void configureBridgePins(void) {"
+BLOCK_END = "\n/* ---------------- CRC and validation ---------------- */"
+
+NEW_UART_BLOCK = r'''static void configureBridgePins(void) {
+    CMU_ClockEnable(cmuClock_GPIO, true);
+    GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
+    GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
+}
+
+static void configureBridgeUart(void) {
+    configureBridgePins();
+
+    NVIC_DisableIRQ(UART1_RX_IRQn);
+    NVIC_ClearPendingIRQ(UART1_RX_IRQn);
+
+    CMU_ClockEnable(BRIDGE_UART_CLOCK, true);
+    USART_Reset(BRIDGE_UART);
+
+    USART_InitAsync_TypeDef uartInit = USART_INITASYNC_DEFAULT;
+    uartInit.enable = usartDisable;
+    uartInit.baudrate = ESPBRIDGE_DEFAULT_BAUD;
+    uartInit.oversampling = usartOVS16;
+
+    USART_InitAsync(BRIDGE_UART, &uartInit);
+
+    BRIDGE_UART->ROUTE = UART_ROUTE_TXPEN | UART_ROUTE_RXPEN | BRIDGE_UART_LOCATION;
+    USART_Enable(BRIDGE_UART, usartEnable);
+}
+
+static void stopBridgeUart(void) {
+    USART_Reset(BRIDGE_UART);
+    CMU_ClockEnable(BRIDGE_UART_CLOCK, false);
+    GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
+    GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
+}
+
+static void bridgeDelayMilliseconds(uint32_t milliseconds) {
+    for (uint32_t i = 0; i < milliseconds; i += 1) {
+        USBTIMER_DelayMs(1);
+        WDOG_Feed();
+    }
+}
+
+static inline void gpioWrite(GPIO_Port_TypeDef port, unsigned int pin, bool value) {
+    if (value) {
+        GPIO_PinOutSet(port, pin);
+    } else {
+        GPIO_PinOutClear(port, pin);
+    }
+}
+
+static inline bool rawRequestPinActive(void) {
+    return GPIO_PinInGet(BRIDGE_REQ_PORT, BRIDGE_REQ_PIN) != 0;
+}
+
+static inline bool uartRxAvailable(void) {
+    return (BRIDGE_UART->STATUS & UART_STATUS_RXDATAV) != 0;
+}
+
+static bool uartReadByte(uint8_t *byte) {
+    if (!uartRxAvailable()) return false;
+    *byte = USART_Rx(BRIDGE_UART);
+    return true;
+}
+
+static void uartWriteByte(uint8_t byte) {
+    USART_Tx(BRIDGE_UART, byte);
+}
+
+static void uartWrite(const void *data, uint32_t length) {
+    const uint8_t *p = (const uint8_t*)data;
+    for (uint32_t i = 0; i < length; i += 1) uartWriteByte(p[i]);
+}
+
+static void sendLine(const char *fmt, ...) {
+    char out[192];
+    va_list args;
+    va_start(args, fmt);
+    int n = vsnprintf(out, sizeof(out), fmt, args);
+    va_end(args);
+    if (n < 0) return;
+    if ((uint32_t)n >= sizeof(out)) n = sizeof(out) - 1;
+    uartWrite(out, (uint32_t)n);
+    uartWrite("\n", 1);
+}
+
+/* Returns true when a complete line was read. CR is ignored. */
+static bool readLine(uint32_t timeoutMs) {
+    uint32_t index = 0;
+    uint32_t elapsedMs = 0;
+
+    while (elapsedMs < timeoutMs && index < ESPBRIDGE_MAX_LINE - 1) {
+        WDOG_Feed();
+
+        uint8_t byte;
+        if (uartReadByte(&byte)) {
+            char c = (char)byte;
+            if (c == '\r') continue;
+            if (c == '\n') {
+                lineBuffer[index] = 0;
+                return index > 0;
+            }
+            lineBuffer[index++] = c;
+        } else {
+            USBTIMER_DelayMs(1);
+            elapsedMs += 1;
+        }
+    }
+
+    lineBuffer[index] = 0;
+    return false;
+}
+'''
+
+
+def replace_once(text: str, old: str, new: str, label: str) -> tuple[str, bool]:
+    if new in text:
+        return text, False
+    if old not in text:
+        raise SystemExit(f"Could not find ESP bridge {label} text to patch")
+    return text.replace(old, new, 1), True
+
+
+def replace_uart_block(text: str) -> tuple[str, bool]:
+    if "USART_InitAsync_TypeDef uartInit" in text and "stopBridgeUart" in text:
+        return text, False
+
+    start = text.find(BLOCK_START)
+    if start < 0:
+        raise SystemExit("Could not find ESP bridge UART block start")
+
+    end = text.find(BLOCK_END, start)
+    if end < 0:
+        raise SystemExit("Could not find ESP bridge UART block end")
+
+    return text[:start] + NEW_UART_BLOCK + text[end:], True
+
+
+def main() -> None:
+    text = BRIDGE_C.read_text(encoding="utf-8")
+    text, include_changed = replace_once(text, OLD_INCLUDE, NEW_INCLUDE, "USBTIMER include")
+    text, block_changed = replace_uart_block(text)
+    text, stop_changed = replace_once(text, "    stopSoftUartTimer();", "    stopBridgeUart();", "UART stop call")
+    BRIDGE_C.write_text(text, encoding="utf-8")
+
+    changed = []
+    if include_changed:
+        changed.append("USBTIMER include")
+    if block_changed:
+        changed.append("hardware UART block")
+    if stop_changed:
+        changed.append("UART stop call")
+
+    if changed:
+        print("Applied ESP bridge hardware UART patch: " + ", ".join(changed))
+    else:
+        print("ESP bridge hardware UART patch already applied")
+
+
+if __name__ == "__main__":
+    main()
