@@ -64,6 +64,7 @@ jobs:
             firmware/inc/digitalfilter.h
             firmware/inc/gps.h
             firmware/tools/apply-espbridge-request-service.py
+            firmware/tools/apply-espbridge-hardware-uart.py
             firmware/tools/apply-espbridge-optional-request.py
             firmware/tools/apply-espbridge-sd-info.py
             firmware/tools/apply-espbridge-ready-beacon.py
@@ -117,6 +118,16 @@ jobs:
           echo "Overlay bridge snippets:"
           grep -n 'ESPBRIDGE_DEFAULT_BAUD' project/inc/espbridge.h
           grep -n 'OK BRIDGE_READY\|OK PONG\|OK DONE' project/src/espbridge.c
+
+      - name: Apply hardware UART bridge patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 firmware/tools/apply-espbridge-hardware-uart.py
+          grep -n 'USART_InitAsync_TypeDef uartInit' project/src/espbridge.c
+          grep -n 'UART_ROUTE_TXPEN' project/src/espbridge.c
+          grep -n 'UART_STATUS_RXDATAV' project/src/espbridge.c
+          grep -n 'stopBridgeUart' project/src/espbridge.c
 
       - name: Apply ESP request service patch
         shell: bash
@@ -203,7 +214,8 @@ jobs:
             echo "firmware_description=AudioMoth-Firmware-Basic"
             echo "firmware_version=1.12.0"
             echo "espbridge_baud=115200"
-            echo "espbridge_request_service=idle_file_service_any_sd_file_skip_config_sd_power_guard_skip_unsafe_115200_sd_info"
+            echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
+            echo "espbridge_request_service=hardware_uart1_115200_idle_file_service_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
             echo "espbridge_max_session_seconds=7200"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt
