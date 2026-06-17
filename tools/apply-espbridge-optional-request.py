@@ -6,7 +6,8 @@ alive when PA7 is not being sampled correctly. For the transfer prototype, file
 commands are allowed whenever the AudioMoth bridge service is active and the
 firmware is not busy recording, instead of waiting for the scheduler's separate
 uploadAllowed flag. LIST walks a few folder levels, emits INFO ENTRY lines for
-all visible entries, and exposes any regular file except CONFIG.TXT. Raw FatFs
+visible protocol-safe entries, skips CONFIG.TXT, and skips hidden/system or
+path-unsafe SD entries such as Windows' System Volume Information. Raw FatFs
 LIST/GET/DELETE operations keep the SD card clock powered while touching the
 card, matching the stock AudioMoth filesystem helpers.
 """
@@ -91,6 +92,7 @@ COMMAND_DELETE_START = "static void commandDelete(char *args) {"
 COMMAND_TIME_START = "static void commandTime(char *args) {"
 
 NEW_LIST_FUNCTION = r'''#define LIST_MAX_DEPTH 4
+#define LIST_SKIP_ATTRS 0x06
 
 static bool isDotDirectory(const char *name) {
     return strcmp(name, ".") == 0 || strcmp(name, "..") == 0;
@@ -99,6 +101,10 @@ static bool isDotDirectory(const char *name) {
 static void buildChildPath(char *out, uint32_t outSize, const char *prefix, const char *name) {
     if (prefix[0]) snprintf(out, outSize, "%s/%s", prefix, name);
     else snprintf(out, outSize, "%s", name);
+}
+
+static bool isBridgeSafePath(const char *path) {
+    return validPath(path, false);
 }
 
 static void listDirectoryRecursive(const char *prefix, uint32_t depth) {
@@ -123,6 +129,16 @@ static void listDirectoryRecursive(const char *prefix, uint32_t depth) {
 
         char full[ESPBRIDGE_MAX_PATH];
         buildChildPath(full, sizeof(full), prefix, fno.fname);
+
+        if (fno.fattrib & LIST_SKIP_ATTRS) {
+            sendLine("INFO SKIP_ATTR %s %u", full, (unsigned int)fno.fattrib);
+            continue;
+        }
+
+        if (!isBridgeSafePath(full)) {
+            sendLine("INFO SKIP_PATH %s", full);
+            continue;
+        }
 
         sendLine("INFO ENTRY %s %lu %u", full, (unsigned long)fno.fsize, (unsigned int)fno.fattrib);
 
@@ -270,7 +286,7 @@ def replace_all(text: str, old: str, new: str, label: str, minimum: int) -> tupl
 
 
 def replace_between(text: str, start: str, end: str, new: str, label: str) -> tuple[str, bool]:
-    if "static void listDirectoryRecursive" in text and "SKIP_CONFIG" in text and "rawFilesystemBegin();" in text:
+    if "static void listDirectoryRecursive" in text and "SKIP_ATTR" in text and "rawFilesystemBegin();" in text:
         return text, False
     start_index = text.find(start)
     if start_index < 0:
@@ -344,9 +360,9 @@ def main() -> None:
         print("ESP STATUS allowed flag patch already applied")
 
     if list_changed:
-        print("Applied ESP recursive any-file SD LIST diagnostics patch")
+        print("Applied ESP recursive safe any-file SD LIST diagnostics patch")
     else:
-        print("ESP recursive any-file SD LIST diagnostics patch already applied")
+        print("ESP recursive safe any-file SD LIST diagnostics patch already applied")
 
     if get_changed:
         print("Applied ESP powered SD GET patch")
