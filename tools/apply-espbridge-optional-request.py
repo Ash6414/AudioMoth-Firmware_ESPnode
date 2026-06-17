@@ -5,7 +5,8 @@ The ESP32 still drives ESP_REQ, but this build must also keep the UART service
 alive when PA7 is not being sampled correctly. For the transfer prototype, file
 commands are allowed whenever the AudioMoth bridge service is active and the
 firmware is not busy recording, instead of waiting for the scheduler's separate
-uploadAllowed flag.
+uploadAllowed flag. LIST also walks a few folder levels and emits INFO ENTRY
+lines so the ESP32 serial log reveals what the AudioMoth filesystem can see.
 """
 
 from __future__ import annotations
@@ -44,6 +45,65 @@ NEW_FILE_GATE = "    if (!fileCommandsAllowed()) {"
 OLD_STATUS_ALLOWED = "             uploadAllowed ? 1 : 0,"
 NEW_STATUS_ALLOWED = "             fileCommandsAllowed() ? 1 : 0,"
 
+LIST_FUNCTION_START = "static void listOneDirectory(const char *prefix) {"
+LIST_FUNCTION_END = "static void commandList(void) {"
+
+NEW_LIST_FUNCTION = r'''#define LIST_MAX_DEPTH 4
+
+static bool isDotDirectory(const char *name) {
+    return strcmp(name, ".") == 0 || strcmp(name, "..") == 0;
+}
+
+static void buildChildPath(char *out, uint32_t outSize, const char *prefix, const char *name) {
+    if (prefix[0]) snprintf(out, outSize, "%s/%s", prefix, name);
+    else snprintf(out, outSize, "%s", name);
+}
+
+static void listDirectoryRecursive(const char *prefix, uint32_t depth) {
+    DIR dir;
+    FILINFO fno;
+
+    FRESULT res = f_opendir(&dir, prefix[0] ? prefix : "");
+    if (res != FR_OK) {
+        sendLine("INFO OPENDIR %s %u", prefix[0] ? prefix : "/", (unsigned int)res);
+        return;
+    }
+
+    while (true) {
+        WDOG_Feed();
+        res = f_readdir(&dir, &fno);
+        if (res != FR_OK) {
+            sendLine("INFO READDIR %s %u", prefix[0] ? prefix : "/", (unsigned int)res);
+            break;
+        }
+        if (fno.fname[0] == 0) break;
+        if (isDotDirectory(fno.fname)) continue;
+
+        char full[ESPBRIDGE_MAX_PATH];
+        buildChildPath(full, sizeof(full), prefix, fno.fname);
+
+        sendLine("INFO ENTRY %s %lu %u", full, (unsigned long)fno.fsize, (unsigned int)fno.fattrib);
+
+        if (fno.fattrib & AM_DIR) {
+            if (depth < LIST_MAX_DEPTH) {
+                listDirectoryRecursive(full, depth + 1);
+            } else {
+                sendLine("INFO SKIP_DEPTH %s", full);
+            }
+        } else if (fileLooksLikeWav(full)) {
+            sendLine("FILE %s %lu", full, (unsigned long)fno.fsize);
+        }
+    }
+
+    f_closedir(&dir);
+}
+
+static void listOneDirectory(const char *prefix) {
+    listDirectoryRecursive(prefix, 0);
+}
+
+'''
+
 
 def replace_once(text: str, old: str, new: str, label: str) -> tuple[str, bool]:
     if new in text:
@@ -62,6 +122,18 @@ def replace_all(text: str, old: str, new: str, label: str, minimum: int) -> tupl
     return text.replace(old, new), count
 
 
+def replace_between(text: str, start: str, end: str, new: str, label: str) -> tuple[str, bool]:
+    if "static void listDirectoryRecursive" in text and "INFO ENTRY" in text:
+        return text, False
+    start_index = text.find(start)
+    if start_index < 0:
+        raise SystemExit(f"Could not find ESP bridge {label} start text to patch")
+    end_index = text.find(end, start_index)
+    if end_index < 0:
+        raise SystemExit(f"Could not find ESP bridge {label} end text to patch")
+    return text[:start_index] + new + text[end_index:], True
+
+
 def main() -> None:
     text = BRIDGE_C.read_text(encoding="utf-8")
     text, require_changed = replace_once(text, OLD_REQUIRE, NEW_REQUIRE, "request-gate define")
@@ -69,6 +141,7 @@ def main() -> None:
     text, helper_changed = replace_once(text, OLD_ENSURE_FILESYSTEM, NEW_ENSURE_FILESYSTEM, "idle file-command helper")
     text, gate_count = replace_all(text, OLD_FILE_GATE, NEW_FILE_GATE, "file-command gate", 3)
     text, status_changed = replace_once(text, OLD_STATUS_ALLOWED, NEW_STATUS_ALLOWED, "STATUS allowed flag")
+    text, list_changed = replace_between(text, LIST_FUNCTION_START, LIST_FUNCTION_END, NEW_LIST_FUNCTION, "recursive LIST")
     BRIDGE_C.write_text(text, encoding="utf-8")
 
     if require_changed:
@@ -95,6 +168,11 @@ def main() -> None:
         print("Applied ESP STATUS allowed flag patch")
     else:
         print("ESP STATUS allowed flag patch already applied")
+
+    if list_changed:
+        print("Applied ESP recursive SD LIST diagnostics patch")
+    else:
+        print("ESP recursive SD LIST diagnostics patch already applied")
 
 
 if __name__ == "__main__":
