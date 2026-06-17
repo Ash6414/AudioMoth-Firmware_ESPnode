@@ -77,6 +77,7 @@ jobs:
           grep -F '#define ESPBRIDGE_DEFAULT_BAUD              9600' firmware/inc/espbridge.h
           grep -F 'sendLine("OK BRIDGE_READY")' firmware/src/espbridge.c
           grep -F 'sendLine("OK PONG")' firmware/src/espbridge.c
+          grep -F 'fileLooksLikeWav' firmware/src/espbridge.c
 
       - name: Install ARM GCC and build tools
         shell: bash
@@ -190,7 +191,7 @@ jobs:
             echo "firmware_description=AudioMoth-Firmware-Basic"
             echo "firmware_version=1.12.0"
             echo "espbridge_baud=9600"
-            echo "espbridge_request_service=polished_transfer_ready_beacon_optional_hold"
+            echo "espbridge_request_service=polished_transfer_ready_beacon_optional_hold_extensionless_wav"
             echo "espbridge_max_session_seconds=7200"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt
