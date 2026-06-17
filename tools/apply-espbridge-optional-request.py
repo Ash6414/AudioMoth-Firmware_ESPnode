@@ -5,8 +5,8 @@ The ESP32 still drives ESP_REQ, but this build must also keep the UART service
 alive when PA7 is not being sampled correctly. For the transfer prototype, file
 commands are allowed whenever the AudioMoth bridge service is active and the
 firmware is not busy recording, instead of waiting for the scheduler's separate
-uploadAllowed flag. LIST also walks a few folder levels and emits INFO ENTRY
-lines so the ESP32 serial log reveals what the AudioMoth filesystem can see.
+uploadAllowed flag. LIST walks a few folder levels, emits INFO ENTRY lines for
+all visible entries, and exposes any regular file except CONFIG.TXT.
 """
 
 from __future__ import annotations
@@ -20,6 +20,35 @@ NEW_REQUIRE = "#define BRIDGE_REQUIRE_REQ_PIN              0"
 
 OLD_SERVICE_READ = "        bool requestActive = rawRequestPinActive();"
 NEW_SERVICE_READ = "        bool requestActive = ESPBridge_isRequestActive();"
+
+OLD_PATH_MAY = """static bool pathMayBeAudioFile(const char *path) {
+    return endsWithWav(path) || !basenameHasExtension(path);
+}
+"""
+
+NEW_PATH_MAY = """static bool pathMayBeAudioFile(const char *path) {
+    return endsWithWav(path) || !basenameHasExtension(path);
+}
+
+static bool charEqualsIgnoreCase(char a, char b) {
+    return tolower((unsigned char)a) == tolower((unsigned char)b);
+}
+
+static bool isConfigTxtPath(const char *path) {
+    const char *slash = strrchr(path, '/');
+    const char *name = slash == NULL ? path : slash + 1;
+    const char *config = "config.txt";
+
+    for (uint32_t i = 0; config[i] != 0; i += 1) {
+        if (name[i] == 0 || !charEqualsIgnoreCase(name[i], config[i])) return false;
+    }
+
+    return name[10] == 0;
+}
+"""
+
+OLD_PATH_REQUIRE = "    if (requireWav && !pathMayBeAudioFile(path)) return false;"
+NEW_PATH_REQUIRE = "    if (requireWav && isConfigTxtPath(path)) return false;"
 
 OLD_ENSURE_FILESYSTEM = """static bool ensureFilesystem(void) {
     if (filesystemEnabled) return true;
@@ -90,8 +119,10 @@ static void listDirectoryRecursive(const char *prefix, uint32_t depth) {
             } else {
                 sendLine("INFO SKIP_DEPTH %s", full);
             }
-        } else if (fileLooksLikeWav(full)) {
+        } else if (!isConfigTxtPath(full)) {
             sendLine("FILE %s %lu", full, (unsigned long)fno.fsize);
+        } else {
+            sendLine("INFO SKIP_CONFIG %s", full);
         }
     }
 
@@ -123,7 +154,7 @@ def replace_all(text: str, old: str, new: str, label: str, minimum: int) -> tupl
 
 
 def replace_between(text: str, start: str, end: str, new: str, label: str) -> tuple[str, bool]:
-    if "static void listDirectoryRecursive" in text and "INFO ENTRY" in text:
+    if "static void listDirectoryRecursive" in text and "SKIP_CONFIG" in text:
         return text, False
     start_index = text.find(start)
     if start_index < 0:
@@ -138,6 +169,8 @@ def main() -> None:
     text = BRIDGE_C.read_text(encoding="utf-8")
     text, require_changed = replace_once(text, OLD_REQUIRE, NEW_REQUIRE, "request-gate define")
     text, service_changed = replace_once(text, OLD_SERVICE_READ, NEW_SERVICE_READ, "service request check")
+    text, path_helper_changed = replace_once(text, OLD_PATH_MAY, NEW_PATH_MAY, "config path helper")
+    text, path_require_changed = replace_once(text, OLD_PATH_REQUIRE, NEW_PATH_REQUIRE, "GET/DELETE config path guard")
     text, helper_changed = replace_once(text, OLD_ENSURE_FILESYSTEM, NEW_ENSURE_FILESYSTEM, "idle file-command helper")
     text, gate_count = replace_all(text, OLD_FILE_GATE, NEW_FILE_GATE, "file-command gate", 3)
     text, status_changed = replace_once(text, OLD_STATUS_ALLOWED, NEW_STATUS_ALLOWED, "STATUS allowed flag")
@@ -153,6 +186,16 @@ def main() -> None:
         print("Applied ESP optional service-loop patch")
     else:
         print("ESP optional service-loop patch already applied")
+
+    if path_helper_changed:
+        print("Applied ESP config path helper patch")
+    else:
+        print("ESP config path helper patch already applied")
+
+    if path_require_changed:
+        print("Applied ESP GET/DELETE config path guard patch")
+    else:
+        print("ESP GET/DELETE config path guard patch already applied")
 
     if helper_changed:
         print("Applied ESP idle file-command helper patch")
@@ -170,9 +213,9 @@ def main() -> None:
         print("ESP STATUS allowed flag patch already applied")
 
     if list_changed:
-        print("Applied ESP recursive SD LIST diagnostics patch")
+        print("Applied ESP recursive any-file SD LIST diagnostics patch")
     else:
-        print("ESP recursive SD LIST diagnostics patch already applied")
+        print("ESP recursive any-file SD LIST diagnostics patch already applied")
 
 
 if __name__ == "__main__":
