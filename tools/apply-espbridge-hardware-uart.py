@@ -14,10 +14,6 @@ from pathlib import Path
 
 BRIDGE_C = Path("project/src/espbridge.c")
 
-OLD_INCLUDE = """#include \"em_timer.h\"\n#include \"em_usart.h\"\n#include \"em_wdog.h\"\n"""
-
-NEW_INCLUDE = """#include \"em_timer.h\"\n#include \"em_usart.h\"\n#include \"em_usbtimer.h\"\n#include \"em_wdog.h\"\n"""
-
 BLOCK_START = "static void configureBridgePins(void) {"
 BLOCK_END = "\n/* ---------------- CRC and validation ---------------- */"
 
@@ -56,7 +52,7 @@ static void stopBridgeUart(void) {
 
 static void bridgeDelayMilliseconds(uint32_t milliseconds) {
     for (uint32_t i = 0; i < milliseconds; i += 1) {
-        USBTIMER_DelayMs(1);
+        AudioMoth_delay(1);
         WDOG_Feed();
     }
 }
@@ -122,7 +118,7 @@ static bool readLine(uint32_t timeoutMs) {
             }
             lineBuffer[index++] = c;
         } else {
-            USBTIMER_DelayMs(1);
+            AudioMoth_delay(1);
             elapsedMs += 1;
         }
     }
@@ -158,14 +154,11 @@ def replace_uart_block(text: str) -> tuple[str, bool]:
 
 def main() -> None:
     text = BRIDGE_C.read_text(encoding="utf-8")
-    text, include_changed = replace_once(text, OLD_INCLUDE, NEW_INCLUDE, "USBTIMER include")
     text, block_changed = replace_uart_block(text)
     text, stop_changed = replace_once(text, "    stopSoftUartTimer();", "    stopBridgeUart();", "UART stop call")
     BRIDGE_C.write_text(text, encoding="utf-8")
 
     changed = []
-    if include_changed:
-        changed.append("USBTIMER include")
     if block_changed:
         changed.append("hardware UART block")
     if stop_changed:
