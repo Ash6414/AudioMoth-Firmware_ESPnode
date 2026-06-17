@@ -13,7 +13,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define ESPBRIDGE_DEFAULT_BAUD              250000
+#define ESPBRIDGE_DEFAULT_BAUD              115200
 #define ESPBRIDGE_MAX_LINE                  160
 #define ESPBRIDGE_MAX_PATH                  96
 #define ESPBRIDGE_CHUNK_BYTES               512
