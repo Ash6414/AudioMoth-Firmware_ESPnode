@@ -15,8 +15,8 @@ Clone the contents of [AudioMoth-Project](https://github.com/OpenAcousticDevices
 Replace the ```src/main.c``` from AudioMoth-Project with the ```src/main.c``` from this repository. Put all the remaining ```src/*.c``` files and all the ```src/*.h``` files from this repository into the ```/src/``` and ```/inc/``` folders of the AudioMoth-Project repository. Add the  ```/gps/``` folder from the AudioMoth-Project code into the compilation chain by updating the definitions of the include and source files in the ```/build/Makefile``` as below:
 
 ```
-INC = ../cmsis ../device/inc ../emlib/inc ../drivers/inc ../fatfs/inc  ../gps/inc ../inc
-SRC = ../device/src ../emlib/src ../drivers/src ../fatfs/src  ../gps/src ../src
+INC = ../cmsis ../device/inc ../emlib/inc ../emusb/inc ../drivers/inc ../fatfs/inc  ../gps/inc ../inc
+SRC = ../device/src ../emlib/src ../emusb/src ../drivers/src ../fatfs/src  ../gps/src ../src
 ```
 
 ### Documentation ####
