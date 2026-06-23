@@ -14,9 +14,11 @@
 #include <stdbool.h>
 
 #define ESPBRIDGE_DEFAULT_BAUD              115200
+#define ESPBRIDGE_FAST_BAUD                 1000000
+#define ESPBRIDGE_TRAINING_BYTES            1024
 #define ESPBRIDGE_MAX_LINE                  160
 #define ESPBRIDGE_MAX_PATH                  96
-#define ESPBRIDGE_CHUNK_BYTES               4096
+#define ESPBRIDGE_CHUNK_BYTES               16384
 #define ESPBRIDGE_UPLOAD_GUARD_SECONDS      300
 
 void ESPBridge_init(void);
