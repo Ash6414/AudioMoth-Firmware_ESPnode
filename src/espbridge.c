@@ -205,6 +205,12 @@ static bool readLine(uint32_t timeoutMs) {
     return false;
 }
 
+static void bridgeSetBaud(uint32_t baud) {
+    uint32_t timerFrequency = CMU_ClockFreqGet(cmuClock_TIMER1);
+    softUartTicksPerBit = (timerFrequency + baud / 2) / baud;
+    if (softUartTicksPerBit == 0) softUartTicksPerBit = 1;
+}
+
 /* ---------------- CRC and validation ---------------- */
 
 static uint32_t crc32Update(uint32_t crc, const uint8_t *data, uint32_t length) {
@@ -217,6 +223,18 @@ static uint32_t crc32Update(uint32_t crc, const uint8_t *data, uint32_t length) 
         }
     }
     return ~crc;
+}
+
+static void sendFastTrainingPreamble(void) {
+    bridgeDelayMilliseconds(40);
+    for (uint32_t i = 0; i < ESPBRIDGE_TRAINING_BYTES; i += 1) {
+        uartWriteByte(0x55);
+    }
+    uartWrite("\n", 1);
+    for (uint32_t i = 0; i < 3; i += 1) {
+        sendLine("OK FAST_READY");
+        bridgeDelayMilliseconds(5);
+    }
 }
 
 static bool endsWithWav(const char *path) {
@@ -448,6 +466,21 @@ static void commandDelete(char *args) {
     else sendLine("ERR DELETE %u", (unsigned int)res);
 }
 
+static void commandBaud(char *args) {
+    unsigned long baud = 0;
+    if (sscanf(args, "%lu", &baud) != 1 ||
+        (baud != ESPBRIDGE_DEFAULT_BAUD && baud != ESPBRIDGE_FAST_BAUD)) {
+        sendLine("ERR ARG unsupported_baud");
+        return;
+    }
+
+    sendLine("OK BAUD %lu", baud);
+    bridgeSetBaud((uint32_t)baud);
+    if (baud == ESPBRIDGE_FAST_BAUD) {
+        sendFastTrainingPreamble();
+    }
+}
+
 static void commandTime(char *args) {
     unsigned long seconds = 0;
     unsigned long milliseconds = 0;
@@ -476,6 +509,8 @@ static void commandStatus(uint32_t deadlineUnixSeconds) {
 static bool handleCommand(uint32_t deadlineUnixSeconds) {
     if (strcmp(lineBuffer, "PING") == 0) {
         sendLine("OK PONG");
+    } else if (strncmp(lineBuffer, "BAUD ", 5) == 0) {
+        commandBaud(lineBuffer + 5);
     } else if (strcmp(lineBuffer, "STATUS") == 0) {
         commandStatus(deadlineUnixSeconds);
     } else if (strncmp(lineBuffer, "TIME ", 5) == 0) {
