@@ -79,7 +79,7 @@ jobs:
           grep -F '#define ESPBRIDGE_DEFAULT_BAUD              115200' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_FAST_BAUD                 1000000' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_TRAINING_BYTES            1024' firmware/inc/espbridge.h
-          grep -F '#define ESPBRIDGE_CHUNK_BYTES               16384' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_CHUNK_BYTES               8192' firmware/inc/espbridge.h
           grep -F 'sendLine("OK BRIDGE_READY")' firmware/src/espbridge.c
           grep -F 'sendLine("OK PONG")' firmware/src/espbridge.c
           grep -F 'sendLine("OK FAST_READY")' firmware/src/espbridge.c
@@ -227,7 +227,7 @@ jobs:
             echo "espbridge_control_baud=115200"
             echo "espbridge_fast_baud=1000000"
             echo "espbridge_training_bytes=1024"
-            echo "espbridge_chunk_bytes=16384"
+            echo "espbridge_chunk_bytes=8192"
             echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
             echo "espbridge_uart1_rx_poll_us=2"
             echo "espbridge_request_service=hardware_uart1_negotiated_1mbaud_trained_idle_file_service_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
