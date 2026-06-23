@@ -2,7 +2,7 @@
 """Patch ESPBridge to use AudioMoth UART1 hardware on PB9/PB10.
 
 The first bridge prototype bit-banged UART with TIMER1. That works only at very
-low baud rates and produced corrupted READY lines at 115200. AudioMoth-Project
+low baud rates and cannot sustain the negotiated 1 Mbaud transfer mode. AudioMoth-Project
 already routes the GPS UART through UART1 LOC2 with RX on PB10; LOC2 also gives
 TX on PB9. This patch replaces the software-UART primitives with polled UART1
 hardware while leaving the higher-level bridge protocol untouched.
@@ -17,7 +17,7 @@ BRIDGE_C = Path("project/src/espbridge.c")
 BLOCK_START = "static void configureBridgePins(void) {"
 BLOCK_END = "\n/* ---------------- CRC and validation ---------------- */"
 
-NEW_UART_BLOCK = r'''#define UART_RX_POLL_US                    50
+NEW_UART_BLOCK = r'''#define UART_RX_POLL_US                    2
 
 static uint32_t uartPollTicksPerMicrosecond = 1;
 
@@ -59,10 +59,7 @@ static void bridgeDelayMicroseconds(uint32_t microseconds) {
     }
 }
 
-static void configureBridgeUart(void) {
-    configureBridgePins();
-    startUartPollTimer();
-
+static void applyBridgeUartBaud(uint32_t baud) {
     NVIC_DisableIRQ(UART1_RX_IRQn);
     NVIC_ClearPendingIRQ(UART1_RX_IRQn);
 
@@ -71,13 +68,26 @@ static void configureBridgeUart(void) {
 
     USART_InitAsync_TypeDef uartInit = USART_INITASYNC_DEFAULT;
     uartInit.enable = usartDisable;
-    uartInit.baudrate = ESPBRIDGE_DEFAULT_BAUD;
+    uartInit.baudrate = baud;
     uartInit.oversampling = usartOVS16;
 
     USART_InitAsync(BRIDGE_UART, &uartInit);
 
     BRIDGE_UART->ROUTE = UART_ROUTE_TXPEN | UART_ROUTE_RXPEN | BRIDGE_UART_LOCATION;
     USART_Enable(BRIDGE_UART, usartEnable);
+}
+
+static void configureBridgeUart(void) {
+    configureBridgePins();
+    startUartPollTimer();
+    applyBridgeUartBaud(ESPBRIDGE_DEFAULT_BAUD);
+}
+
+static void bridgeSetBaud(uint32_t baud) {
+    while ((BRIDGE_UART->STATUS & UART_STATUS_TXC) == 0) {
+        WDOG_Feed();
+    }
+    applyBridgeUartBaud(baud);
 }
 
 static void stopBridgeUart(void) {
