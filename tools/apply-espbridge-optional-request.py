@@ -89,7 +89,7 @@ LIST_FUNCTION_START = "static void listOneDirectory(const char *prefix) {"
 LIST_FUNCTION_END = "static void commandList(void) {"
 COMMAND_GET_START = "static void commandGet(char *args) {"
 COMMAND_DELETE_START = "static void commandDelete(char *args) {"
-COMMAND_TIME_START = "static void commandTime(char *args) {"
+COMMAND_BAUD_START = "static void commandBaud(char *args) {"
 
 NEW_LIST_FUNCTION = r'''#define LIST_MAX_DEPTH 4
 #define LIST_SKIP_ATTRS 0x06
@@ -321,7 +321,7 @@ def main() -> None:
     text, status_changed = replace_once(text, OLD_STATUS_ALLOWED, NEW_STATUS_ALLOWED, "STATUS allowed flag")
     text, list_changed = replace_between(text, LIST_FUNCTION_START, LIST_FUNCTION_END, NEW_LIST_FUNCTION, "recursive LIST")
     text, get_changed = replace_function(text, COMMAND_GET_START, COMMAND_DELETE_START, NEW_COMMAND_GET, "powered GET", "rawFilesystemBegin();")
-    text, delete_changed = replace_function(text, COMMAND_DELETE_START, COMMAND_TIME_START, NEW_COMMAND_DELETE, "powered DELETE", "rawFilesystemBegin();")
+    text, delete_changed = replace_function(text, COMMAND_DELETE_START, COMMAND_BAUD_START, NEW_COMMAND_DELETE, "powered DELETE", "rawFilesystemBegin();")
     BRIDGE_C.write_text(text, encoding="utf-8")
 
     if require_changed:
