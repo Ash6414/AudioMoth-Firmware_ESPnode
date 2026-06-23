@@ -3,34 +3,42 @@
 Custom AudioMoth Dev firmware for the ESP32 AudioMoth bridge node.
 
 This fork intentionally keeps the USB firmware name `AudioMoth-Firmware-Basic`
-so the AudioMoth Configuration App treats it like the standard Basic firmware.
-Do not rename the firmware description in `src/main.c` unless you also want to
-break Configurator compatibility.
+so the AudioMoth Configuration App treats it like standard Basic firmware. Do
+not rename the firmware description in `src/main.c` unless Configurator
+compatibility is intentionally being removed.
 
 ## Current ESP bridge behavior
 
 - Firmware name: `AudioMoth-Firmware-Basic`
-- Bridge UART: `115200`
-- Bridge transport: EFM32 `UART1` hardware route on PB9/PB10
+- Control UART: `115200`
+- Fast data UART: `1000000`
+- Fast-link startup: 40 ms guard, 1024 bytes of `0x55`, then repeated
+  `OK FAST_READY` markers
+- UART file payload: 8192 bytes with CRC32
+- Bridge transport: EFM32 `UART1` LOC2 hardware route on PB9/PB10
 - ESP request pin: PA7
 - AudioMoth busy pin: PA8
-- GPS support: disabled so the ESP bridge owns PA7, PA8, PB9, PB10, and UART1
+- GPS support: disabled so the bridge owns PA7, PA8, PB9, PB10, and UART1
 - `OK BRIDGE_READY` repeats while the bridge service is idle
-- `PING`, `STATUS`, `TIME`, and `DONE` work in the early bridge window
-- `LIST`, `GET`, and `DELETE` work while the bridge service is active and the
+- `PING`, `STATUS`, `TIME`, `BAUD`, and `DONE` work in the bridge window
+- `LIST`, `GET`, and `DELETE` work while bridge service is active and the
   AudioMoth is not busy recording
 - `LIST` recursively walks SD card folders up to 4 levels deep
 - `LIST` includes any regular SD file except `CONFIG.TXT` / `config.txt`
 - File discovery does not require a `.WAV` suffix
-- `LIST` emits `SD total_kb=... free_kb=...` before file entries so the ESP32
-  can send free SD space in its manifest and heartbeat
+- `LIST` emits `SD total_kb=... free_kb=...` before file entries
+
+The 115200 control rate makes startup tolerant of resets and older ESP firmware.
+A matching ESP negotiates 1 Mbaud, waits for the training marker, verifies it
+with `PING`, then transfers data. The next service session starts at 115200
+again.
 
 ## ESP32 wiring
 
 ```text
 ESP32-WROOM-U                 AudioMoth Dev
-GPIO16 RX2  <---------------- PB9 UART TX
-GPIO17 TX2  ----------------> PB10 UART RX
+GPIO32 RX2  <---------------- PB9 UART TX
+GPIO33 TX2  ----------------> PB10 UART RX
 GPIO25 OUT  ----------------> PA7 ESP_REQ
 GPIO26 IN   <---------------- PA8 MOTH_BUSY
 GND         ----------------- GND
@@ -38,17 +46,19 @@ GND         ----------------- GND
 
 ## Flash notes
 
-Flash the generated `audiomoth.bin` with the AudioMoth Flash App, then put the
+Download the latest successful `audiomoth-firmware-bin` GitHub Actions
+artifact and flash `audiomoth.bin` with the AudioMoth Flash App. Then put the
 AudioMoth switch back into CUSTOM/run mode before testing with the ESP32.
 
-The matching ESP32 sketch is in the `Ash6414/Espmoth` repository under
+The matching ESP32 sketch is in `Ash6414/Espmoth` under
 `ESPBridge-MothNode1`.
 
 ## Build notes
 
-The repo is based on the Open Acoustic Devices Basic firmware layout. Build it
-inside the AudioMoth project toolchain and keep the output firmware named like
-Basic so the Configurator remains compatible.
+GitHub Actions overlays this repository onto AudioMoth-Project, applies the
+hardware UART and safe SD-service patches, builds `audiomoth.bin`, verifies
+the bridge strings, and publishes the binary, hex, map, listing, and build
+metadata as one artifact.
 
 Compatible with the [AudioMoth Configuration App](https://github.com/OpenAcousticDevices/AudioMoth-Configuration-App).
 For standard AudioMoth usage instructions, visit
