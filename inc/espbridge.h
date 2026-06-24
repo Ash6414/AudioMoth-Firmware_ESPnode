@@ -16,6 +16,8 @@
 #define ESPBRIDGE_DEFAULT_BAUD              115200
 #define ESPBRIDGE_FAST_BAUD                 1000000
 #define ESPBRIDGE_TRAINING_BYTES            1024
+#define ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES 128
+#define ESPBRIDGE_FAST_SWITCH_GUARD_MS      20
 #define ESPBRIDGE_MAX_LINE                  160
 #define ESPBRIDGE_MAX_PATH                  96
 #define ESPBRIDGE_RX_BUFFER_BYTES           256
