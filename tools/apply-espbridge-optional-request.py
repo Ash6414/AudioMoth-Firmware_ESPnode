@@ -87,7 +87,7 @@ NEW_STATUS_ALLOWED = "             fileCommandsAllowed() ? 1 : 0,"
 
 LIST_FUNCTION_START = "static void listOneDirectory(const char *prefix) {"
 LIST_FUNCTION_END = "static void commandList(void) {"
-COMMAND_GET_START = "static void commandGet(char *args) {"
+COMMAND_GET_START = "static void commandGet(char *args, bool fastPayload) {"
 COMMAND_DELETE_START = "static void commandDelete(char *args) {"
 COMMAND_BAUD_START = "static void commandBaud(char *args) {"
 
@@ -166,7 +166,7 @@ static void listOneDirectory(const char *prefix) {
 
 '''
 
-NEW_COMMAND_GET = r'''static void commandGet(char *args) {
+NEW_COMMAND_GET = r'''static void commandGet(char *args, bool fastPayload) {
     char path[ESPBRIDGE_MAX_PATH];
     unsigned long offset = 0;
     unsigned long requested = ESPBRIDGE_CHUNK_BYTES;
@@ -230,8 +230,27 @@ NEW_COMMAND_GET = r'''static void commandGet(char *args) {
     }
 
     uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
-    sendLine("DATA %s %lu %u %08lX", path, offset, (unsigned int)bytesRead, (unsigned long)crc);
+    if (!fastPayload) {
+        sendLine("DATA %s %lu %u %08lX", path, offset, (unsigned int)bytesRead, (unsigned long)crc);
+        uartWrite(chunkBuffer, bytesRead);
+        return;
+    }
+
+    sendLine("FASTDATA %s %lu %u %08lX %lu", path, offset, (unsigned int)bytesRead,
+             (unsigned long)crc, (unsigned long)fastPayloadBaud);
+    bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
+    bridgeSetBaud(fastPayloadBaud);
+
+    for (uint32_t i = 0; i < ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES; i += 1) {
+        uartWriteByte(0x55);
+    }
+    static const uint8_t magic[] = {0xA5, 0x5A, 0xC3, 0x3C};
+    uartWrite(magic, sizeof(magic));
     uartWrite(chunkBuffer, bytesRead);
+
+    bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
+    bridgeDelayMilliseconds(5);
+    sendLine("OK FASTDATA %lu %u", offset, (unsigned int)bytesRead);
 }
 
 '''
