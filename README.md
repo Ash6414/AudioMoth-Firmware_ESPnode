@@ -15,6 +15,7 @@ compatibility is intentionally being removed.
 - Fast payload startup: 20 ms guard, 1024 bytes of `0x55`, then a binary marker
 - Lower payload rates use a shorter 128-byte training preamble
 - UART file payload: 8192 bytes with CRC32
+- Each data header reports SD read milliseconds for end-to-end bottleneck measurement
 - Bridge transport: EFM32 `UART1` LOC2 hardware route on PB9/PB10
 - RX handling: all ESP-to-AudioMoth commands remain at 115200 baud
 - ESP request pin: PA7
