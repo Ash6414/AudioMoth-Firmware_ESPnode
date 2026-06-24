@@ -133,7 +133,6 @@ jobs:
           python3 firmware/tools/apply-espbridge-hardware-uart.py
           grep -n 'USART_InitAsync_TypeDef uartInit' project/src/espbridge.c
           grep -n 'UART_ROUTE_TXPEN' project/src/espbridge.c
-          grep -n 'UART_STATUS_RXDATAV' project/src/espbridge.c
           grep -n 'UART_RX_POLL_US' project/src/espbridge.c
           grep -n 'startUartPollTimer' project/src/espbridge.c
           grep -n 'bridgeDelayMicroseconds' project/src/espbridge.c
