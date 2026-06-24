@@ -57,6 +57,41 @@ static uint32_t softUartTicksPerMillisecond = 0;
 static char lineBuffer[ESPBRIDGE_MAX_LINE];
 static uint8_t chunkBuffer[ESPBRIDGE_CHUNK_BYTES];
 
+static volatile uint8_t bridgeRxBuffer[ESPBRIDGE_RX_BUFFER_BYTES];
+static volatile uint8_t bridgeRxHead = 0;
+static volatile uint8_t bridgeRxTail = 0;
+static volatile bool bridgeRxOverflow = false;
+
+void ESPBridge_handleReceivedByte(uint8_t byte) {
+    uint8_t next = (uint8_t)(bridgeRxHead + 1U);
+    if (next == bridgeRxTail) {
+        bridgeRxOverflow = true;
+        return;
+    }
+
+    bridgeRxBuffer[bridgeRxHead] = byte;
+    bridgeRxHead = next;
+}
+
+static void resetBridgeRxBuffer(void) {
+    bridgeRxHead = 0;
+    bridgeRxTail = 0;
+    bridgeRxOverflow = false;
+}
+
+static bool bufferedRxAvailable(void) {
+    return bridgeRxHead != bridgeRxTail;
+}
+
+static bool bufferedRxRead(uint8_t *byte) {
+    uint8_t tail = bridgeRxTail;
+    if (bridgeRxHead == tail) return false;
+
+    *byte = bridgeRxBuffer[tail];
+    bridgeRxTail = (uint8_t)(tail + 1U);
+    return true;
+}
+
 /* ---------------- UART primitives ---------------- */
 
 static void configureBridgePins(void) {
