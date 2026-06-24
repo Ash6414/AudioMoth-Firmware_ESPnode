@@ -51,6 +51,7 @@ static volatile bool bridgeBusy = true;
 static volatile bool uploadAllowed = false;
 static bool filesystemEnabled = false;
 static bool serviceActive = false;
+static uint32_t fastPayloadBaud = ESPBRIDGE_FAST_BAUD;
 static uint32_t softUartTicksPerBit = 0;
 static uint32_t softUartTicksPerMillisecond = 0;
 
@@ -417,7 +418,7 @@ static void commandList(void) {
     sendLine("END");
 }
 
-static void commandGet(char *args) {
+static void commandGet(char *args, bool fastPayload) {
     char path[ESPBRIDGE_MAX_PATH];
     unsigned long offset = 0;
     unsigned long requested = ESPBRIDGE_CHUNK_BYTES;
@@ -471,8 +472,27 @@ static void commandGet(char *args) {
     }
 
     uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
-    sendLine("DATA %s %lu %u %08lX", path, offset, (unsigned int)bytesRead, (unsigned long)crc);
+    if (!fastPayload) {
+        sendLine("DATA %s %lu %u %08lX", path, offset, (unsigned int)bytesRead, (unsigned long)crc);
+        uartWrite(chunkBuffer, bytesRead);
+        return;
+    }
+
+    sendLine("FASTDATA %s %lu %u %08lX %lu", path, offset, (unsigned int)bytesRead,
+             (unsigned long)crc, (unsigned long)fastPayloadBaud);
+    bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
+    bridgeSetBaud(fastPayloadBaud);
+
+    for (uint32_t i = 0; i < ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES; i += 1) {
+        uartWriteByte(0x55);
+    }
+    static const uint8_t magic[] = {0xA5, 0x5A, 0xC3, 0x3C};
+    uartWrite(magic, sizeof(magic));
     uartWrite(chunkBuffer, bytesRead);
+
+    bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
+    bridgeDelayMilliseconds(5);
+    sendLine("OK FASTDATA %lu %u", offset, (unsigned int)bytesRead);
 }
 
 static void commandDelete(char *args) {
@@ -501,6 +521,25 @@ static void commandDelete(char *args) {
     else sendLine("ERR DELETE %u", (unsigned int)res);
 }
 
+static bool supportedBaud(uint32_t baud) {
+    return baud == ESPBRIDGE_DEFAULT_BAUD ||
+           baud == 230400UL ||
+           baud == 460800UL ||
+           baud == 921600UL ||
+           baud == 1000000UL;
+}
+
+static void commandFastCapability(char *args) {
+    unsigned long baud = 0;
+    if (sscanf(args, "%lu", &baud) != 1 || !supportedBaud((uint32_t)baud)) {
+        sendLine("ERR ARG unsupported_baud");
+        return;
+    }
+
+    fastPayloadBaud = (uint32_t)baud;
+    sendLine("OK FASTCAP %lu %u", baud, ESPBRIDGE_CHUNK_BYTES);
+}
+
 static void commandBaud(char *args) {
     unsigned long baud = 0;
     if (sscanf(args, "%lu", &baud) != 1) {
@@ -508,12 +547,7 @@ static void commandBaud(char *args) {
         return;
     }
 
-    bool supported = baud == ESPBRIDGE_DEFAULT_BAUD ||
-                     baud == 230400UL ||
-                     baud == 460800UL ||
-                     baud == 921600UL ||
-                     baud == 1000000UL;
-    if (!supported) {
+    if (!supportedBaud((uint32_t)baud)) {
         sendLine("ERR ARG unsupported_baud");
         return;
     }
@@ -553,6 +587,8 @@ static void commandStatus(uint32_t deadlineUnixSeconds) {
 static bool handleCommand(uint32_t deadlineUnixSeconds) {
     if (strcmp(lineBuffer, "PING") == 0) {
         sendLine("OK PONG");
+    } else if (strncmp(lineBuffer, "FASTCAP ", 8) == 0) {
+        commandFastCapability(lineBuffer + 8);
     } else if (strncmp(lineBuffer, "BAUD ", 5) == 0) {
         commandBaud(lineBuffer + 5);
     } else if (strcmp(lineBuffer, "STATUS") == 0) {
@@ -562,7 +598,9 @@ static bool handleCommand(uint32_t deadlineUnixSeconds) {
     } else if (strcmp(lineBuffer, "LIST") == 0) {
         commandList();
     } else if (strncmp(lineBuffer, "GET ", 4) == 0) {
-        commandGet(lineBuffer + 4);
+        commandGet(lineBuffer + 4, false);
+    } else if (strncmp(lineBuffer, "GETFAST ", 8) == 0) {
+        commandGet(lineBuffer + 8, true);
     } else if (strncmp(lineBuffer, "DELETE ", 7) == 0) {
         commandDelete(lineBuffer + 7);
     } else if (strcmp(lineBuffer, "DONE") == 0) {
