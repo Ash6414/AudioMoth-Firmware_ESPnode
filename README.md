@@ -11,7 +11,7 @@ compatibility is intentionally being removed.
 
 - Firmware name: `AudioMoth-Firmware-Basic`
 - Control UART: `115200`
-- Fast payload UART: `1000000`
+- Fast payload UART: `921600`
 - Fast payload startup: 20 ms guard, 128 bytes of `0x55`, then a binary marker
 - UART file payload: 8192 bytes with CRC32
 - Bridge transport: EFM32 `UART1` LOC2 hardware route on PB9/PB10
@@ -30,7 +30,7 @@ compatibility is intentionally being removed.
 
 The 115200 control rate makes startup tolerant of resets and avoids the weak
 high-speed ESP-to-AudioMoth receive direction. A matching ESP arms `GETFAST`;
-AudioMoth switches only each 8192-byte payload to 1 Mbaud, sends it to the ESP,
+AudioMoth switches only each 8192-byte payload to 921600 baud, sends it to the ESP,
 and automatically returns to 115200 before accepting the next command.
 
 ## ESP32 wiring
