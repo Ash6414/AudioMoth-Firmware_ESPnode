@@ -17,7 +17,7 @@ BRIDGE_C = Path("project/src/espbridge.c")
 BLOCK_START = "static void configureBridgePins(void) {"
 BLOCK_END = "\n/* ---------------- CRC and validation ---------------- */"
 
-NEW_UART_BLOCK = r'''#define UART_RX_POLL_US                    2
+NEW_UART_BLOCK = r'''#define UART_RX_POLL_US                    50
 
 static uint32_t uartPollTicksPerMicrosecond = 1;
 
@@ -61,6 +61,8 @@ static void bridgeDelayMicroseconds(uint32_t microseconds) {
 
 static void applyBridgeUartBaud(uint32_t baud) {
     NVIC_DisableIRQ(UART1_RX_IRQn);
+    USART_IntDisable(BRIDGE_UART, UART_IF_RXDATAV);
+    USART_IntClear(BRIDGE_UART, UART_IF_RXDATAV);
     NVIC_ClearPendingIRQ(UART1_RX_IRQn);
 
     CMU_ClockEnable(BRIDGE_UART_CLOCK, true);
@@ -74,7 +76,13 @@ static void applyBridgeUartBaud(uint32_t baud) {
     USART_InitAsync(BRIDGE_UART, &uartInit);
 
     BRIDGE_UART->ROUTE = UART_ROUTE_TXPEN | UART_ROUTE_RXPEN | BRIDGE_UART_LOCATION;
+    resetBridgeRxBuffer();
     USART_Enable(BRIDGE_UART, usartEnable);
+
+    USART_IntClear(BRIDGE_UART, UART_IF_RXDATAV);
+    USART_IntEnable(BRIDGE_UART, UART_IF_RXDATAV);
+    NVIC_ClearPendingIRQ(UART1_RX_IRQn);
+    NVIC_EnableIRQ(UART1_RX_IRQn);
 }
 
 static void configureBridgeUart(void) {
@@ -91,8 +99,13 @@ static void bridgeSetBaud(uint32_t baud) {
 }
 
 static void stopBridgeUart(void) {
+    NVIC_DisableIRQ(UART1_RX_IRQn);
+    USART_IntDisable(BRIDGE_UART, UART_IF_RXDATAV);
+    USART_IntClear(BRIDGE_UART, UART_IF_RXDATAV);
+    NVIC_ClearPendingIRQ(UART1_RX_IRQn);
     USART_Reset(BRIDGE_UART);
     CMU_ClockEnable(BRIDGE_UART_CLOCK, false);
+    resetBridgeRxBuffer();
     GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
     GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
     stopUartPollTimer();
@@ -118,13 +131,11 @@ static inline bool rawRequestPinActive(void) {
 }
 
 static inline bool uartRxAvailable(void) {
-    return (BRIDGE_UART->STATUS & UART_STATUS_RXDATAV) != 0;
+    return bufferedRxAvailable();
 }
 
 static bool uartReadByte(uint8_t *byte) {
-    if (!uartRxAvailable()) return false;
-    *byte = USART_Rx(BRIDGE_UART);
-    return true;
+    return bufferedRxRead(byte);
 }
 
 static void uartWriteByte(uint8_t byte) {
