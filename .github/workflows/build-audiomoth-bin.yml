@@ -77,7 +77,7 @@ jobs:
           grep -F 'static uint8_t firmwareVersion[AM_FIRMWARE_VERSION_LENGTH] = {1, 12, 0};' firmware/src/main.c
           grep -F 'static uint8_t firmwareDescription[AM_FIRMWARE_DESCRIPTION_LENGTH] = "AudioMoth-Firmware-Basic";' firmware/src/main.c
           grep -F '#define ESPBRIDGE_DEFAULT_BAUD              115200' firmware/inc/espbridge.h
-          grep -F '#define ESPBRIDGE_FAST_BAUD                 1000000' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_FAST_BAUD                 921600' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_TRAINING_BYTES            1024' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES 128' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_CHUNK_BYTES               8192' firmware/inc/espbridge.h
@@ -235,7 +235,7 @@ jobs:
             echo "firmware_description=AudioMoth-Firmware-Basic"
             echo "firmware_version=1.12.0"
             echo "espbridge_control_baud=115200"
-            echo "espbridge_fast_baud=1000000"
+            echo "espbridge_fast_baud=921600"
             echo "espbridge_training_bytes=1024"
             echo "espbridge_fast_payload_training_bytes=128"
             echo "espbridge_chunk_bytes=8192"
