@@ -216,7 +216,10 @@ NEW_COMMAND_GET = r'''static void commandGet(char *args, bool fastPayload) {
     }
 
     UINT bytesRead = 0;
+    uint32_t readStartSeconds, readStartMilliseconds;
+    AudioMoth_getTime(&readStartSeconds, &readStartMilliseconds);
     res = f_read(&file, chunkBuffer, (UINT)requested, &bytesRead);
+    uint32_t sdReadMilliseconds = elapsedServiceMilliseconds(readStartSeconds, readStartMilliseconds);
     FRESULT closeRes = f_close(&file);
     rawFilesystemEnd();
 
@@ -231,13 +234,14 @@ NEW_COMMAND_GET = r'''static void commandGet(char *args, bool fastPayload) {
 
     uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
     if (!fastPayload) {
-        sendLine("DATA %s %lu %u %08lX", path, offset, (unsigned int)bytesRead, (unsigned long)crc);
+        sendLine("DATA %s %lu %u %08lX %lu", path, offset, (unsigned int)bytesRead,
+                 (unsigned long)crc, (unsigned long)sdReadMilliseconds);
         uartWrite(chunkBuffer, bytesRead);
         return;
     }
 
-    sendLine("FASTDATA %s %lu %u %08lX %lu", path, offset, (unsigned int)bytesRead,
-             (unsigned long)crc, (unsigned long)fastPayloadBaud);
+    sendLine("FASTDATA %s %lu %u %08lX %lu %lu", path, offset, (unsigned int)bytesRead,
+             (unsigned long)crc, (unsigned long)fastPayloadBaud, (unsigned long)sdReadMilliseconds);
     bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
     bridgeSetBaud(fastPayloadBaud);
 
