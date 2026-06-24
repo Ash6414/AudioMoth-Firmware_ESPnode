@@ -11,28 +11,27 @@ compatibility is intentionally being removed.
 
 - Firmware name: `AudioMoth-Firmware-Basic`
 - Control UART: `115200`
-- Fast data UART: `1000000`
-- Fast-link startup: 40 ms guard, 1024 bytes of `0x55`, then repeated
-  `OK FAST_READY` markers
+- Fast payload UART: `1000000`
+- Fast payload startup: 20 ms guard, 128 bytes of `0x55`, then a binary marker
 - UART file payload: 8192 bytes with CRC32
 - Bridge transport: EFM32 `UART1` LOC2 hardware route on PB9/PB10
-- RX handling: existing UART1 interrupt callback feeding a 256-byte bridge ring buffer
+- RX handling: all ESP-to-AudioMoth commands remain at 115200 baud
 - ESP request pin: PA7
 - AudioMoth busy pin: PA8
 - GPS support: disabled so the bridge owns PA7, PA8, PB9, PB10, and UART1
 - `OK BRIDGE_READY` repeats while the bridge service is idle
-- `PING`, `STATUS`, `TIME`, `BAUD`, and `DONE` work in the bridge window
-- `LIST`, `GET`, and `DELETE` work while bridge service is active and the
+- `PING`, `STATUS`, `TIME`, `FASTCAP`, and `DONE` work in the bridge window
+- `LIST`, `GET`, `GETFAST`, and `DELETE` work while bridge service is active and the
   AudioMoth is not busy recording
 - `LIST` recursively walks SD card folders up to 4 levels deep
 - `LIST` includes any regular SD file except `CONFIG.TXT` / `config.txt`
 - File discovery does not require a `.WAV` suffix
 - `LIST` emits `SD total_kb=... free_kb=...` before file entries
 
-The 115200 control rate makes startup tolerant of resets and older ESP firmware.
-A matching ESP negotiates 1 Mbaud, waits for the training marker, verifies it
-with `PING`, then transfers data. The next service session starts at 115200
-again.
+The 115200 control rate makes startup tolerant of resets and avoids the weak
+high-speed ESP-to-AudioMoth receive direction. A matching ESP arms `GETFAST`;
+AudioMoth switches only each 8192-byte payload to 1 Mbaud, sends it to the ESP,
+and automatically returns to 115200 before accepting the next command.
 
 ## ESP32 wiring
 
