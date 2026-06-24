@@ -79,11 +79,14 @@ jobs:
           grep -F '#define ESPBRIDGE_DEFAULT_BAUD              115200' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_FAST_BAUD                 1000000' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_TRAINING_BYTES            1024' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES 128' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_CHUNK_BYTES               8192' firmware/inc/espbridge.h
           grep -F 'sendLine("OK BRIDGE_READY")' firmware/src/espbridge.c
           grep -F 'sendLine("OK PONG")' firmware/src/espbridge.c
           grep -F 'sendLine("OK FAST_READY")' firmware/src/espbridge.c
           grep -F 'commandBaud' firmware/src/espbridge.c
+          grep -F 'commandFastCapability' firmware/src/espbridge.c
+          grep -F 'GETFAST ' firmware/src/espbridge.c
           grep -F 'ESPBridge_handleReceivedByte' firmware/src/espbridge.c
           grep -F 'ESPBridge_handleReceivedByte(byte);' firmware/src/gps.c
           grep -F 'fileLooksLikeWav' firmware/src/espbridge.c
@@ -140,6 +143,8 @@ jobs:
           grep -n 'bridgeSetBaud' project/src/espbridge.c
           grep -n 'USART_IntEnable(BRIDGE_UART, UART_IF_RXDATAV)' project/src/espbridge.c
           grep -n 'bufferedRxRead' project/src/espbridge.c
+          grep -n 'FASTDATA ' project/src/espbridge.c
+          grep -n 'OK FASTCAP' project/src/espbridge.c
           grep -n '#define UART_RX_POLL_US                    50' project/src/espbridge.c
 
       - name: Apply ESP request service patch
@@ -210,6 +215,8 @@ jobs:
           strings project/build/audiomoth.bin | grep -F 'OK BRIDGE_READY'
           strings project/build/audiomoth.bin | grep -F 'OK PONG'
           strings project/build/audiomoth.bin | grep -F 'OK FAST_READY'
+          strings project/build/audiomoth.bin | grep -F 'OK FASTCAP'
+          strings project/build/audiomoth.bin | grep -F 'FASTDATA'
           strings project/build/audiomoth.bin | grep -F 'SD total_kb='
 
           mkdir -p firmware-artifacts
@@ -230,10 +237,11 @@ jobs:
             echo "espbridge_control_baud=115200"
             echo "espbridge_fast_baud=1000000"
             echo "espbridge_training_bytes=1024"
+            echo "espbridge_fast_payload_training_bytes=128"
             echo "espbridge_chunk_bytes=8192"
             echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
             echo "espbridge_uart1_rx_poll_us=50"
-            echo "espbridge_request_service=hardware_uart1_interrupt_rx_negotiated_1mbaud_trained_idle_file_service_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
+            echo "espbridge_request_service=hardware_uart1_interrupt_rx_115200_control_1mbaud_tx_payload_idle_file_service_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
             echo "espbridge_max_session_seconds=7200"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt
