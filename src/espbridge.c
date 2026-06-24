@@ -468,12 +468,17 @@ static void commandDelete(char *args) {
 
 static void commandBaud(char *args) {
     unsigned long baud = 0;
+    if (sscanf(args, "%lu", &baud) != 1) {
+        sendLine("ERR ARG unsupported_baud");
+        return;
+    }
+
     bool supported = baud == ESPBRIDGE_DEFAULT_BAUD ||
                      baud == 230400UL ||
                      baud == 460800UL ||
                      baud == 921600UL ||
                      baud == 1000000UL;
-    if (sscanf(args, "%lu", &baud) != 1 || !supported) {
+    if (!supported) {
         sendLine("ERR ARG unsupported_baud");
         return;
     }
