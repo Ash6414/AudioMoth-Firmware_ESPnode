@@ -502,7 +502,10 @@ static void commandGet(char *args, bool fastPayload) {
     bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
     bridgeSetBaud(fastPayloadBaud);
 
-    for (uint32_t i = 0; i < ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES; i += 1) {
+    uint32_t trainingBytes = fastPayloadBaud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
+        ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
+        : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
+    for (uint32_t i = 0; i < trainingBytes; i += 1) {
         uartWriteByte(0x55);
     }
     static const uint8_t magic[] = {0xA5, 0x5A, 0xC3, 0x3C};
