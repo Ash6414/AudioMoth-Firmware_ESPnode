@@ -12,7 +12,8 @@ compatibility is intentionally being removed.
 - Firmware name: `AudioMoth-Firmware-Basic`
 - Control UART: `115200`
 - Fast payload UART: `921600`
-- Fast payload startup: 20 ms guard, 128 bytes of `0x55`, then a binary marker
+- Fast payload startup: 20 ms guard, 1024 bytes of `0x55`, then a binary marker
+- Lower payload rates use a shorter 128-byte training preamble
 - UART file payload: 8192 bytes with CRC32
 - Bridge transport: EFM32 `UART1` LOC2 hardware route on PB9/PB10
 - RX handling: all ESP-to-AudioMoth commands remain at 115200 baud
