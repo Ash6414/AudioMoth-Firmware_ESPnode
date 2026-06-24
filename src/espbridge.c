@@ -418,6 +418,25 @@ static void commandList(void) {
     sendLine("END");
 }
 
+static bool supportedBaud(uint32_t baud) {
+    return baud == ESPBRIDGE_DEFAULT_BAUD ||
+           baud == 230400UL ||
+           baud == 460800UL ||
+           baud == 921600UL ||
+           baud == 1000000UL;
+}
+
+static void commandFastCapability(char *args) {
+    unsigned long baud = 0;
+    if (sscanf(args, "%lu", &baud) != 1 || !supportedBaud((uint32_t)baud)) {
+        sendLine("ERR ARG unsupported_baud");
+        return;
+    }
+
+    fastPayloadBaud = (uint32_t)baud;
+    sendLine("OK FASTCAP %lu %u", baud, ESPBRIDGE_CHUNK_BYTES);
+}
+
 static void commandGet(char *args, bool fastPayload) {
     char path[ESPBRIDGE_MAX_PATH];
     unsigned long offset = 0;
@@ -519,25 +538,6 @@ static void commandDelete(char *args) {
     FRESULT res = f_unlink(path);
     if (res == FR_OK) sendLine("OK DELETE %s", path);
     else sendLine("ERR DELETE %u", (unsigned int)res);
-}
-
-static bool supportedBaud(uint32_t baud) {
-    return baud == ESPBRIDGE_DEFAULT_BAUD ||
-           baud == 230400UL ||
-           baud == 460800UL ||
-           baud == 921600UL ||
-           baud == 1000000UL;
-}
-
-static void commandFastCapability(char *args) {
-    unsigned long baud = 0;
-    if (sscanf(args, "%lu", &baud) != 1 || !supportedBaud((uint32_t)baud)) {
-        sendLine("ERR ARG unsupported_baud");
-        return;
-    }
-
-    fastPayloadBaud = (uint32_t)baud;
-    sendLine("OK FASTCAP %lu %u", baud, ESPBRIDGE_CHUNK_BYTES);
 }
 
 static void commandBaud(char *args) {
