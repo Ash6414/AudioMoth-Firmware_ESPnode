@@ -16,6 +16,7 @@
 #include <stdbool.h>
 
 #include "gps.h"
+#include "espbridge.h"
 
 /* Interrupt entry points kept as no-ops so linked vector names remain defined. */
 
@@ -23,7 +24,7 @@ void GPIO_ODD_IRQHandler(void) {
 }
 
 void GPSInterface_handleReceivedByte(uint8_t byte) {
-    (void)byte;
+    ESPBridge_handleReceivedByte(byte);
 }
 
 void GPSInterface_handlePulsePerSecond(uint32_t counter, uint32_t counterPeriod, uint32_t counterFrequency) {
