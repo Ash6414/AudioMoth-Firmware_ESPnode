@@ -88,6 +88,7 @@ jobs:
           grep -F 'commandBaud' firmware/src/espbridge.c
           grep -F 'commandFastCapability' firmware/src/espbridge.c
           grep -F 'GETFAST ' firmware/src/espbridge.c
+          grep -F 'sdReadMilliseconds' firmware/src/espbridge.c
           grep -F 'ESPBridge_handleReceivedByte' firmware/src/espbridge.c
           grep -F 'ESPBridge_handleReceivedByte(byte);' firmware/src/gps.c
           grep -F 'fileLooksLikeWav' firmware/src/espbridge.c
@@ -146,6 +147,7 @@ jobs:
           grep -n 'bufferedRxRead' project/src/espbridge.c
           grep -n 'FASTDATA ' project/src/espbridge.c
           grep -n 'OK FASTCAP' project/src/espbridge.c
+          grep -n 'sdReadMilliseconds' project/src/espbridge.c
           grep -n '#define UART_RX_POLL_US                    50' project/src/espbridge.c
 
       - name: Apply ESP request service patch
@@ -241,6 +243,7 @@ jobs:
             echo "espbridge_fast_payload_training_bytes=1024"
             echo "espbridge_slow_payload_training_bytes=128"
             echo "espbridge_chunk_bytes=8192"
+            echo "espbridge_sd_read_timing=header_milliseconds"
             echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
             echo "espbridge_uart1_rx_poll_us=50"
             echo "espbridge_request_service=hardware_uart1_interrupt_rx_115200_control_921600baud_tx_payload_idle_file_service_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
