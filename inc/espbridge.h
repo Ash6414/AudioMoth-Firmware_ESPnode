@@ -14,14 +14,18 @@
 #include <stdbool.h>
 
 #define ESPBRIDGE_DEFAULT_BAUD              115200
-#define ESPBRIDGE_FAST_BAUD                 460800
+#define ESPBRIDGE_FAST_BAUD                 1000000
 #define ESPBRIDGE_TRAINING_BYTES            1024
 #define ESPBRIDGE_MAX_LINE                  160
 #define ESPBRIDGE_MAX_PATH                  96
+#define ESPBRIDGE_RX_BUFFER_BYTES           256
 #define ESPBRIDGE_CHUNK_BYTES               8192
 #define ESPBRIDGE_UPLOAD_GUARD_SECONDS      300
 
 void ESPBridge_init(void);
+
+/* Called by the existing UART1 RX interrupt callback in gps.c. */
+void ESPBridge_handleReceivedByte(uint8_t byte);
 
 /* High means AudioMoth is recording/preparing/doing protected SD work. */
 void ESPBridge_setBusy(bool busy);
