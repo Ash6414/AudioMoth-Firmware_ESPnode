@@ -11,11 +11,12 @@ compatibility is intentionally being removed.
 
 - Firmware name: `AudioMoth-Firmware-Basic`
 - Control UART: `115200`
-- Fast data UART: `460800`
+- Fast data UART: `1000000`
 - Fast-link startup: 40 ms guard, 1024 bytes of `0x55`, then repeated
   `OK FAST_READY` markers
 - UART file payload: 8192 bytes with CRC32
 - Bridge transport: EFM32 `UART1` LOC2 hardware route on PB9/PB10
+- RX handling: existing UART1 interrupt callback feeding a 256-byte bridge ring buffer
 - ESP request pin: PA7
 - AudioMoth busy pin: PA8
 - GPS support: disabled so the bridge owns PA7, PA8, PB9, PB10, and UART1
@@ -29,7 +30,7 @@ compatibility is intentionally being removed.
 - `LIST` emits `SD total_kb=... free_kb=...` before file entries
 
 The 115200 control rate makes startup tolerant of resets and older ESP firmware.
-A matching ESP negotiates 460800 baud, waits for the training marker, verifies it
+A matching ESP negotiates 1 Mbaud, waits for the training marker, verifies it
 with `PING`, then transfers data. The next service session starts at 115200
 again.
 
