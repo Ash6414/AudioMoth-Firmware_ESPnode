@@ -468,15 +468,19 @@ static void commandDelete(char *args) {
 
 static void commandBaud(char *args) {
     unsigned long baud = 0;
-    if (sscanf(args, "%lu", &baud) != 1 ||
-        (baud != ESPBRIDGE_DEFAULT_BAUD && baud != ESPBRIDGE_FAST_BAUD)) {
+    bool supported = baud == ESPBRIDGE_DEFAULT_BAUD ||
+                     baud == 230400UL ||
+                     baud == 460800UL ||
+                     baud == 921600UL ||
+                     baud == 1000000UL;
+    if (sscanf(args, "%lu", &baud) != 1 || !supported) {
         sendLine("ERR ARG unsupported_baud");
         return;
     }
 
     sendLine("OK BAUD %lu", baud);
     bridgeSetBaud((uint32_t)baud);
-    if (baud == ESPBRIDGE_FAST_BAUD) {
+    if (baud != ESPBRIDGE_DEFAULT_BAUD) {
         sendFastTrainingPreamble();
     }
 }
