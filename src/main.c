@@ -1831,7 +1831,8 @@ int main(void) {
      * rejected because uploadAllowed is false.
      */
 
-    if (switchPosition == AM_SWITCH_CUSTOM && (AudioMoth_hasTimeBeenSet() == false || ESPBridge_isRequestActive())) {
+    if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) &&
+        (AudioMoth_hasTimeBeenSet() == false || ESPBridge_isRequestActive())) {
 
         uint32_t waitedMilliseconds = 0;
 
@@ -2564,24 +2565,28 @@ int main(void) {
 
         int64_t timeToEarliestEvent = MIN(timeUntilPreparationStart, timeUntilNextGPSTimeSetting);
 
-        /* ESP32 upload service.
+        /* ESP32 request service.
          *
          * No SD MUX is used: AudioMoth remains the only SD-card master.
-         * The ESP32 asserts ESP_REQ, waits for MOTH_BUSY to drop, then talks UART.
-         * Service is refused inside the guard window before preparation/recording. */
-        if (switchPosition == AM_SWITCH_CUSTOM &&
+         * Any asserted ESP_REQ gets a UART command window, so the ESP32 can
+         * PING, STATUS, TIME, or DONE even when file upload is not safe.
+         * LIST, GET, and DELETE remain gated by uploadAllowed. */
+        if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) &&
             getBackupFlag(BACKUP_WAITING_FOR_MAGNETIC_SWITCH) == false &&
-            timeUntilPreparationStart > (int64_t)ESPBRIDGE_UPLOAD_GUARD_SECONDS * MILLISECONDS_IN_SECOND) {
+            ESPBridge_isRequestActive()) {
 
-            uint32_t bridgeDeadline = *timeOfNextRecording - ESPBRIDGE_UPLOAD_GUARD_SECONDS;
+            bool noScheduledRecording = *timeOfNextRecording == UINT32_MAX;
+            bool uploadServiceAllowed = noScheduledRecording ||
+                timeUntilPreparationStart > (int64_t)ESPBRIDGE_UPLOAD_GUARD_SECONDS * MILLISECONDS_IN_SECOND;
+            uint32_t bridgeDeadline = noScheduledRecording
+                ? UINT32_MAX - 1
+                : uploadServiceAllowed
+                    ? *timeOfNextRecording - ESPBRIDGE_UPLOAD_GUARD_SECONDS
+                    : currentTime + ESP_TIME_SERVICE_WINDOW_SECONDS;
 
             ESPBridge_setBusy(false);
-            ESPBridge_setUploadAllowed(true);
-
-            if (ESPBridge_isRequestActive()) {
-                ESPBridge_serviceUntil(bridgeDeadline);
-            }
-
+            ESPBridge_setUploadAllowed(uploadServiceAllowed);
+            ESPBridge_serviceUntil(bridgeDeadline);
             ESPBridge_setUploadAllowed(false);
             ESPBridge_setBusy(true);
 

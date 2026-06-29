@@ -19,10 +19,10 @@ STARTUP_ANCHOR = r'''    AM_switchPosition_t switchPosition = AudioMoth_getSwitc
 STARTUP_BLOCK = r'''
     /* ESP32 startup request service.
      *
-     * If the ESP32 is already asserting ESP_REQ when custom firmware starts,
+     * If the ESP32 is already asserting ESP_REQ when bridge firmware starts,
      * answer UART immediately before normal configuration/scheduler handling.
      * File upload remains disabled in this early window. */
-    if (switchPosition == AM_SWITCH_CUSTOM && ESPBridge_isRequestActive()) {
+    if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) && ESPBridge_isRequestActive()) {
 
         ESPBridge_setBusy(false);
         ESPBridge_setUploadAllowed(false);
@@ -63,7 +63,7 @@ NEW_BLOCK = r'''        /* ESP32 request service.
          * Any asserted ESP_REQ gets a UART command window, so the ESP32 can
          * PING, STATUS, TIME, or DONE even when file upload is not safe.
          * LIST, GET, and DELETE remain gated by uploadAllowed. */
-        if (switchPosition == AM_SWITCH_CUSTOM &&
+        if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) &&
             getBackupFlag(BACKUP_WAITING_FOR_MAGNETIC_SWITCH) == false &&
             ESPBridge_isRequestActive()) {
 
