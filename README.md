@@ -26,6 +26,7 @@ compatibility is intentionally being removed.
 - `PING`, `STATUS`, `TIME`, `FASTCAP`, and `DONE` work in the bridge window
 - `LIST`, `GET`, `GETFAST`, `GETSTREAM`, and `DELETE` work while bridge service is active and the
   AudioMoth is not busy recording
+- `TESTSTREAM` sends a deterministic 1 MiB max framed stream without touching SD, for UART speed checks
 - `LIST` recursively walks SD card folders up to 4 levels deep
 - `LIST` includes any regular SD file except `CONFIG.TXT` / `config.txt`
 - File discovery does not require a `.WAV` suffix
@@ -38,6 +39,11 @@ to send one 115200-baud command, then AudioMoth switches its transmit side to
 includes offset, length, CRC32, and SD-read milliseconds. AudioMoth returns to
 115200 before accepting the next command. Older `GETFAST` support remains in the
 firmware for bench testing, but `GETSTREAM` is the preferred upload path.
+
+For no-SD-card throughput diagnostics, the matching ESP can issue
+`TESTSTREAM <bytes> <baud>`. AudioMoth sends the same 921600-baud frame format
+as `GETSTREAM`, with predictable byte values and CRC32 per frame, so the ESP can
+measure the UART bottleneck before a real recording is available.
 
 ## ESP32 wiring
 

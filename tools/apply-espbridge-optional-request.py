@@ -378,6 +378,61 @@ static void commandGetStream(char *args) {
     sendLine("OK STREAM %s %lu %lu", path, offset, (unsigned long)sent);
 }
 
+static void fillTestStreamPayload(uint32_t offset, uint8_t *buffer, uint32_t length) {
+    for (uint32_t i = 0; i < length; i += 1) {
+        buffer[i] = (uint8_t)((offset + i) & 0xFFU);
+    }
+}
+
+static void commandTestStream(char *args) {
+    unsigned long requested = ESPBRIDGE_TEST_STREAM_BYTES;
+    unsigned long baud = ESPBRIDGE_FAST_BAUD;
+
+    if (sscanf(args, "%lu %lu", &requested, &baud) < 1) {
+        sendLine("ERR ARG usage_TESTSTREAM_bytes_baud");
+        return;
+    }
+    if (!supportedBaud((uint32_t)baud) || baud == ESPBRIDGE_DEFAULT_BAUD) {
+        sendLine("ERR ARG unsupported_baud");
+        return;
+    }
+    if (requested == 0 || requested > ESPBRIDGE_TEST_STREAM_BYTES) requested = ESPBRIDGE_TEST_STREAM_BYTES;
+
+    sendLine("TESTSTREAM %lu %u %lu", requested, ESPBRIDGE_CHUNK_BYTES, baud);
+    bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
+    bridgeSetBaud((uint32_t)baud);
+
+    uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
+        ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
+        : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
+    for (uint32_t i = 0; i < trainingBytes; i += 1) {
+        uartWriteByte(0x55);
+    }
+
+    static const uint8_t streamMagic[] = {0xA5, 0x5A, 0xD7, 0x7D};
+    uint32_t sent = 0;
+    while (sent < (uint32_t)requested) {
+        WDOG_Feed();
+        uint32_t remaining = (uint32_t)requested - sent;
+        uint32_t frameBytes = remaining > ESPBRIDGE_CHUNK_BYTES ? ESPBRIDGE_CHUNK_BYTES : remaining;
+        fillTestStreamPayload(sent, chunkBuffer, frameBytes);
+
+        uint32_t crc = crc32Update(0, chunkBuffer, frameBytes);
+        uartWrite(streamMagic, sizeof(streamMagic));
+        uartWriteUInt32LE(sent);
+        uartWriteUInt16LE((uint16_t)frameBytes);
+        uartWriteUInt32LE(crc);
+        uartWriteUInt32LE(0);
+        uartWrite(chunkBuffer, frameBytes);
+
+        sent += frameBytes;
+    }
+
+    bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
+    bridgeDelayMilliseconds(5);
+    sendLine("OK TESTSTREAM %lu", (unsigned long)sent);
+}
+
 '''
 
 NEW_COMMAND_DELETE = r'''static void commandDelete(char *args) {
