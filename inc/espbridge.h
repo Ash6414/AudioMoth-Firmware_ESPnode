@@ -24,6 +24,7 @@
 #define ESPBRIDGE_MAX_PATH                  96
 #define ESPBRIDGE_RX_BUFFER_BYTES           256
 #define ESPBRIDGE_CHUNK_BYTES               8192
+#define ESPBRIDGE_STREAM_BYTES              65536
 #define ESPBRIDGE_UPLOAD_GUARD_SECONDS      300
 
 void ESPBridge_init(void);

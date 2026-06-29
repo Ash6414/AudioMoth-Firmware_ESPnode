@@ -260,6 +260,124 @@ NEW_COMMAND_GET = r'''static void commandGet(char *args, bool fastPayload) {
     sendLine("OK FASTDATA %lu %u", offset, (unsigned int)bytesRead);
 }
 
+static void commandGetStream(char *args) {
+    char path[ESPBRIDGE_MAX_PATH];
+    unsigned long offset = 0;
+    unsigned long requested = ESPBRIDGE_STREAM_BYTES;
+    unsigned long baud = ESPBRIDGE_FAST_BAUD;
+
+    if (!fileCommandsAllowed()) {
+        sendLine("ERR BUSY upload_not_allowed");
+        return;
+    }
+    if (sscanf(args, "%95s %lu %lu %lu", path, &offset, &requested, &baud) < 3) {
+        sendLine("ERR ARG usage_GETSTREAM_path_offset_bytes_baud");
+        return;
+    }
+    if (!validPath(path, true)) {
+        sendLine("ERR PATH invalid_path");
+        return;
+    }
+    if (!supportedBaud((uint32_t)baud) || baud == ESPBRIDGE_DEFAULT_BAUD) {
+        sendLine("ERR ARG unsupported_baud");
+        return;
+    }
+    if (requested == 0 || requested > ESPBRIDGE_STREAM_BYTES) requested = ESPBRIDGE_STREAM_BYTES;
+    if (!ensureFilesystem()) {
+        sendLine("ERR SD filesystem_enable_failed");
+        return;
+    }
+
+    rawFilesystemBegin();
+
+    FIL file;
+    FRESULT res = f_open(&file, path, FA_READ);
+    if (res != FR_OK) {
+        rawFilesystemEnd();
+        sendLine("ERR OPEN %u", (unsigned int)res);
+        return;
+    }
+
+    FSIZE_t size = f_size(&file);
+    if ((FSIZE_t)offset > size) {
+        f_close(&file);
+        rawFilesystemEnd();
+        sendLine("ERR RANGE offset_past_eof");
+        return;
+    }
+
+    uint32_t available = (uint32_t)(size - (FSIZE_t)offset);
+    uint32_t totalBytes = (uint32_t)requested > available ? available : (uint32_t)requested;
+
+    res = f_lseek(&file, (FSIZE_t)offset);
+    if (res != FR_OK) {
+        f_close(&file);
+        rawFilesystemEnd();
+        sendLine("ERR SEEK %u", (unsigned int)res);
+        return;
+    }
+
+    sendLine("STREAM %s %lu %lu %u %lu", path, offset, (unsigned long)totalBytes,
+             ESPBRIDGE_CHUNK_BYTES, baud);
+    bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
+    bridgeSetBaud((uint32_t)baud);
+
+    uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
+        ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
+        : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
+    for (uint32_t i = 0; i < trainingBytes; i += 1) {
+        uartWriteByte(0x55);
+    }
+
+    static const uint8_t streamMagic[] = {0xA5, 0x5A, 0xD7, 0x7D};
+    uint32_t sent = 0;
+    bool readError = false;
+
+    while (sent < totalBytes) {
+        WDOG_Feed();
+        uint32_t remaining = totalBytes - sent;
+        UINT toRead = remaining > ESPBRIDGE_CHUNK_BYTES ? ESPBRIDGE_CHUNK_BYTES : (UINT)remaining;
+        UINT bytesRead = 0;
+
+        uint32_t readStartSeconds, readStartMilliseconds;
+        AudioMoth_getTime(&readStartSeconds, &readStartMilliseconds);
+        res = f_read(&file, chunkBuffer, toRead, &bytesRead);
+        uint32_t sdReadMilliseconds = elapsedServiceMilliseconds(readStartSeconds, readStartMilliseconds);
+
+        if (res != FR_OK || bytesRead == 0) {
+            readError = true;
+            break;
+        }
+
+        uint32_t frameOffset = (uint32_t)offset + sent;
+        uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
+        uartWrite(streamMagic, sizeof(streamMagic));
+        uartWriteUInt32LE(frameOffset);
+        uartWriteUInt16LE((uint16_t)bytesRead);
+        uartWriteUInt32LE(crc);
+        uartWriteUInt32LE(sdReadMilliseconds);
+        uartWrite(chunkBuffer, bytesRead);
+
+        sent += bytesRead;
+    }
+
+    FRESULT closeRes = f_close(&file);
+    rawFilesystemEnd();
+    bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
+    bridgeDelayMilliseconds(5);
+
+    if (readError || sent != totalBytes) {
+        sendLine("ERR STREAM read_failed %lu %lu", (unsigned long)sent, (unsigned long)totalBytes);
+        return;
+    }
+    if (closeRes != FR_OK) {
+        sendLine("ERR CLOSE %u", (unsigned int)closeRes);
+        return;
+    }
+
+    sendLine("OK STREAM %s %lu %lu", path, offset, (unsigned long)sent);
+}
+
 '''
 
 NEW_COMMAND_DELETE = r'''static void commandDelete(char *args) {

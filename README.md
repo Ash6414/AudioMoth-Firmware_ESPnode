@@ -11,10 +11,11 @@ compatibility is intentionally being removed.
 
 - Firmware name: `AudioMoth-Firmware-Basic`
 - Control UART: `115200`
-- Fast payload UART: `921600`
-- Fast payload startup: 20 ms guard, 1024 bytes of `0x55`, then a binary marker
+- Fast one-way stream UART: `921600`
+- Fast stream startup: 20 ms guard, 1024 bytes of `0x55`, then framed binary data
 - Lower payload rates use a shorter 128-byte training preamble
 - UART file payload: 8192 bytes with CRC32
+- Fast stream payload: up to 65536 bytes per slow command, sent as CRC32-checked 8192-byte frames
 - Each data header reports SD read milliseconds for end-to-end bottleneck measurement
 - Bridge transport: EFM32 `UART1` LOC2 hardware route on PB9/PB10
 - RX handling: all ESP-to-AudioMoth commands remain at 115200 baud
@@ -23,7 +24,7 @@ compatibility is intentionally being removed.
 - GPS support: disabled so the bridge owns PA7, PA8, PB9, PB10, and UART1
 - `OK BRIDGE_READY` repeats while the bridge service is idle
 - `PING`, `STATUS`, `TIME`, `FASTCAP`, and `DONE` work in the bridge window
-- `LIST`, `GET`, `GETFAST`, and `DELETE` work while bridge service is active and the
+- `LIST`, `GET`, `GETFAST`, `GETSTREAM`, and `DELETE` work while bridge service is active and the
   AudioMoth is not busy recording
 - `LIST` recursively walks SD card folders up to 4 levels deep
 - `LIST` includes any regular SD file except `CONFIG.TXT` / `config.txt`
@@ -31,9 +32,12 @@ compatibility is intentionally being removed.
 - `LIST` emits `SD total_kb=... free_kb=...` before file entries
 
 The 115200 control rate makes startup tolerant of resets and avoids the weak
-high-speed ESP-to-AudioMoth receive direction. A matching ESP arms `GETFAST`;
-AudioMoth switches only each 8192-byte payload to 921600 baud, sends it to the ESP,
-and automatically returns to 115200 before accepting the next command.
+high-speed ESP-to-AudioMoth receive direction. A matching ESP uses `GETSTREAM`
+to send one 115200-baud command, then AudioMoth switches its transmit side to
+921600 baud and streams up to 65536 bytes as framed 8192-byte chunks. Each frame
+includes offset, length, CRC32, and SD-read milliseconds. AudioMoth returns to
+115200 before accepting the next command. Older `GETFAST` support remains in the
+firmware for bench testing, but `GETSTREAM` is the preferred upload path.
 
 ## ESP32 wiring
 

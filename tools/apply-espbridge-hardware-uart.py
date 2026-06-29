@@ -147,6 +147,18 @@ static void uartWrite(const void *data, uint32_t length) {
     for (uint32_t i = 0; i < length; i += 1) uartWriteByte(p[i]);
 }
 
+static void uartWriteUInt16LE(uint16_t value) {
+    uartWriteByte((uint8_t)(value & 0xFF));
+    uartWriteByte((uint8_t)((value >> 8) & 0xFF));
+}
+
+static void uartWriteUInt32LE(uint32_t value) {
+    uartWriteByte((uint8_t)(value & 0xFF));
+    uartWriteByte((uint8_t)((value >> 8) & 0xFF));
+    uartWriteByte((uint8_t)((value >> 16) & 0xFF));
+    uartWriteByte((uint8_t)((value >> 24) & 0xFF));
+}
+
 static void sendLine(const char *fmt, ...) {
     char out[192];
     va_list args;
