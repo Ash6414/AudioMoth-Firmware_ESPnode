@@ -162,14 +162,6 @@ static inline bool rawRequestPinActive(void) {
     return GPIO_PinInGet(BRIDGE_REQ_PORT, BRIDGE_REQ_PIN) != 0;
 }
 
-static inline bool bridgeRequestActive(void) {
-#if BRIDGE_REQUIRE_REQ_PIN
-    return rawRequestPinActive();
-#else
-    return true;
-#endif
-}
-
 static inline bool uartRxAvailable(void) {
     return GPIO_PinInGet(BRIDGE_RX_PORT, BRIDGE_RX_PIN) == 0;
 }
@@ -838,7 +830,11 @@ void ESPBridge_setUploadAllowed(bool allowed) {
 }
 
 bool ESPBridge_isRequestActive(void) {
-    return bridgeRequestActive();
+#if BRIDGE_REQUIRE_REQ_PIN
+    return rawRequestPinActive();
+#else
+    return true;
+#endif
 }
 
 void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
