@@ -375,7 +375,10 @@ static void commandGetStream(char *args) {
         return;
     }
 
-    sendLine("OK STREAM %s %lu %lu", path, offset, (unsigned long)sent);
+    for (uint32_t i = 0; i < 4; i += 1) {
+        sendLine("OK STREAM %s %lu %lu", path, offset, (unsigned long)sent);
+        bridgeDelayMilliseconds(15);
+    }
 }
 
 static void fillTestStreamPayload(uint32_t offset, uint8_t *buffer, uint32_t length) {
@@ -430,7 +433,10 @@ static void commandTestStream(char *args) {
 
     bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
     bridgeDelayMilliseconds(5);
-    sendLine("OK TESTSTREAM %lu", (unsigned long)sent);
+    for (uint32_t i = 0; i < 4; i += 1) {
+        sendLine("OK TESTSTREAM %lu", (unsigned long)sent);
+        bridgeDelayMilliseconds(15);
+    }
 }
 
 '''
