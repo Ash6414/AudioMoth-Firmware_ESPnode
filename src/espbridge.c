@@ -162,6 +162,14 @@ static inline bool rawRequestPinActive(void) {
     return GPIO_PinInGet(BRIDGE_REQ_PORT, BRIDGE_REQ_PIN) != 0;
 }
 
+static inline bool bridgeRequestActive(void) {
+#if BRIDGE_REQUIRE_REQ_PIN
+    return rawRequestPinActive();
+#else
+    return true;
+#endif
+}
+
 static inline bool uartRxAvailable(void) {
     return GPIO_PinInGet(BRIDGE_RX_PORT, BRIDGE_RX_PIN) == 0;
 }
@@ -638,7 +646,10 @@ static void commandGetStream(char *args) {
         return;
     }
 
-    sendLine("OK STREAM %s %lu %lu", path, offset, (unsigned long)sent);
+    for (uint32_t i = 0; i < 4; i += 1) {
+        sendLine("OK STREAM %s %lu %lu", path, offset, (unsigned long)sent);
+        bridgeDelayMilliseconds(15);
+    }
 }
 
 static void fillTestStreamPayload(uint32_t offset, uint8_t *buffer, uint32_t length) {
@@ -693,7 +704,10 @@ static void commandTestStream(char *args) {
 
     bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
     bridgeDelayMilliseconds(5);
-    sendLine("OK TESTSTREAM %lu", (unsigned long)sent);
+    for (uint32_t i = 0; i < 4; i += 1) {
+        sendLine("OK TESTSTREAM %lu", (unsigned long)sent);
+        bridgeDelayMilliseconds(15);
+    }
 }
 
 static void commandDelete(char *args) {
@@ -824,11 +838,7 @@ void ESPBridge_setUploadAllowed(bool allowed) {
 }
 
 bool ESPBridge_isRequestActive(void) {
-#if BRIDGE_REQUIRE_REQ_PIN
-    return rawRequestPinActive();
-#else
-    return true;
-#endif
+    return bridgeRequestActive();
 }
 
 void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
@@ -848,7 +858,7 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
         WDOG_Feed();
 
         bool deadlineDone = deadlineReached(deadlineUnixSeconds);
-        bool requestActive = rawRequestPinActive();
+        bool requestActive = ESPBridge_isRequestActive();
         bool rxAvailable = uartRxAvailable();
 
         if (deadlineDone && !requestActive && !rxAvailable) break;
