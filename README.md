@@ -11,7 +11,8 @@ compatibility is intentionally being removed.
 
 - Firmware name: `AudioMoth-Firmware-Basic`
 - Control UART: `115200`
-- Fast one-way stream UART: `921600`
+- Fast one-way stream UARTs supported: `230400`, `460800`, `921600`
+- Current measured production ESP stream baud: `460800`
 - Fast stream startup: 20 ms guard, 1024 bytes of `0x55`, then framed binary data
 - Lower payload rates use a shorter 128-byte training preamble
 - UART file payload: 8192 bytes with CRC32
@@ -35,15 +36,17 @@ compatibility is intentionally being removed.
 The 115200 control rate makes startup tolerant of resets and avoids the weak
 high-speed ESP-to-AudioMoth receive direction. A matching ESP uses `GETSTREAM`
 to send one 115200-baud command, then AudioMoth switches its transmit side to
-921600 baud and streams up to 65536 bytes as framed 8192-byte chunks. Each frame
+the requested fast baud and streams up to 65536 bytes as framed 8192-byte chunks. Each frame
 includes offset, length, CRC32, and SD-read milliseconds. AudioMoth returns to
 115200 before accepting the next command. Older `GETFAST` support remains in the
 firmware for bench testing, but `GETSTREAM` is the preferred upload path.
 
 For no-SD-card throughput diagnostics, the matching ESP can issue
-`TESTSTREAM <bytes> <baud>`. AudioMoth sends the same 921600-baud frame format
-as `GETSTREAM`, with predictable byte values and CRC32 per frame, so the ESP can
-measure the UART bottleneck before a real recording is available.
+`TESTSTREAM <bytes> <baud>`. AudioMoth sends the same framed format as
+`GETSTREAM`, with predictable byte values and CRC32 per frame, so the ESP can
+measure the UART bottleneck before a real recording is available. The current
+4-inch 30 AWG bridge wiring validated 460800 baud and showed CRC corruption at
+921600 baud.
 
 ## ESP32 wiring
 
