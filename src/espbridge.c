@@ -237,16 +237,16 @@ static bool readLine(uint32_t timeoutMs) {
         uint8_t byte;
         if (uartReadByte(&byte)) {
             char c = (char)byte;
-            if (c == '\r') continue;
             if (c == '\n') {
                 lineBuffer[index] = 0;
                 return index > 0;
             }
-            lineBuffer[index++] = c;
+            if (c != '\r') lineBuffer[index++] = c;
         } else {
             softUartDelayTicks(pollTicks);
-            elapsedTicks += pollTicks;
         }
+
+        elapsedTicks += pollTicks;
     }
 
     lineBuffer[index] = 0;

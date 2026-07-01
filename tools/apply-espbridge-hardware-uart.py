@@ -186,16 +186,16 @@ static bool readLine(uint32_t timeoutMs) {
         uint8_t byte;
         if (uartReadByte(&byte)) {
             char c = (char)byte;
-            if (c == '\r') continue;
             if (c == '\n') {
                 lineBuffer[index] = 0;
                 return index > 0;
             }
-            lineBuffer[index++] = c;
+            if (c != '\r') lineBuffer[index++] = c;
         } else {
             bridgeDelayMicroseconds(UART_RX_POLL_US);
-            elapsedUs += UART_RX_POLL_US;
         }
+
+        elapsedUs += UART_RX_POLL_US;
     }
 
     lineBuffer[index] = 0;
@@ -213,12 +213,17 @@ def replace_once(text: str, old: str, new: str, label: str) -> tuple[str, bool]:
 
 
 def replace_uart_block(text: str) -> tuple[str, bool]:
-    if (
+    has_hardware_uart = (
         "USART_InitAsync_TypeDef uartInit" in text
         and "stopBridgeUart" in text
         and "BRIDGE_UART->STATUS & UART_STATUS_RXDATAV" in text
         and "USART_Rx(BRIDGE_UART)" in text
-    ):
+    )
+    has_bounded_line_timeout = (
+        "if (c != '\\r') lineBuffer[index++] = c;" in text
+        and "\n        elapsedUs += UART_RX_POLL_US;\n    }\n\n    lineBuffer[index] = 0;" in text
+    )
+    if has_hardware_uart and has_bounded_line_timeout:
         return text, False
 
     start = text.find(BLOCK_START)

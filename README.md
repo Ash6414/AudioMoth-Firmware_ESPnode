@@ -22,6 +22,9 @@ compatibility is intentionally being removed.
 - RX handling: all ESP-to-AudioMoth commands remain at 115200 baud; UART1 is
   polled directly with the interrupt buffer as a backup so SD-backed streams
   can keep accepting control commands after each chunk
+- Command line reads use a bounded wall-time timeout even when noisy bytes are
+  arriving, so Wi-Fi-side UART noise cannot trap the bridge inside one partial
+  command forever
 - ESP request pin: PA7
 - AudioMoth busy pin: PA8
 - GPS support: disabled so the bridge owns PA7, PA8, PB9, PB10, and UART1
