@@ -2,9 +2,9 @@
  * espbridge.c
  * AudioMoth Dev <-> ESP32 upload bridge.
  *
- * Protocol is ASCII commands plus binary DATA payloads. AudioMoth owns the
- * microSD at all times; the ESP32 requests files over UART only while the
- * scheduler has opened a safe bridge window.
+ * Protocol is ASCII commands plus framed binary payloads. AudioMoth owns the
+ * microSD at all times; the ESP32 requests files over hardware UART1 only
+ * while the scheduler has opened a safe bridge window.
  *****************************************************************************/
 
 #include <stdint.h>
@@ -58,49 +58,28 @@ static uint32_t softUartTicksPerMillisecond = 0;
 static char lineBuffer[ESPBRIDGE_MAX_LINE];
 static uint8_t chunkBuffer[ESPBRIDGE_CHUNK_BYTES];
 
-static volatile uint8_t bridgeRxBuffer[ESPBRIDGE_RX_BUFFER_BYTES];
-static volatile uint8_t bridgeRxHead = 0;
-static volatile uint8_t bridgeRxTail = 0;
-static volatile bool bridgeRxOverflow = false;
-
 void ESPBridge_handleReceivedByte(uint8_t byte) {
-    uint8_t next = (uint8_t)(bridgeRxHead + 1U);
-    if (next == bridgeRxTail) {
-        bridgeRxOverflow = true;
-        return;
-    }
-
-    bridgeRxBuffer[bridgeRxHead] = byte;
-    bridgeRxHead = next;
-}
-
-static void resetBridgeRxBuffer(void) {
-    bridgeRxHead = 0;
-    bridgeRxTail = 0;
-    bridgeRxOverflow = false;
-}
-
-static bool bufferedRxAvailable(void) {
-    return bridgeRxHead != bridgeRxTail;
-}
-
-static bool bufferedRxRead(uint8_t *byte) {
-    uint8_t tail = bridgeRxTail;
-    if (bridgeRxHead == tail) return false;
-
-    *byte = bridgeRxBuffer[tail];
-    bridgeRxTail = (uint8_t)(tail + 1U);
-    return true;
+    (void)byte;
 }
 
 /* ---------------- UART primitives ---------------- */
+
+static void updateUartTiming(uint32_t baud) {
+    uint32_t timerFrequency = CMU_ClockFreqGet(cmuClock_TIMER1);
+    softUartTicksPerBit = (timerFrequency + baud / 2) / baud;
+    if (softUartTicksPerBit == 0) softUartTicksPerBit = 1;
+    softUartTicksPerMillisecond = (timerFrequency + 500) / 1000;
+}
+
+static USART_OVS_TypeDef oversamplingForBaud(uint32_t baud) {
+    return baud >= 921600UL ? usartOVS8 : usartOVS16;
+}
 
 static void configureBridgePins(void) {
     CMU_ClockEnable(cmuClock_GPIO, true);
     CMU_ClockEnable(BRIDGE_UART_CLOCK, true);
 
     USART_Reset(BRIDGE_UART);
-    CMU_ClockEnable(BRIDGE_UART_CLOCK, false);
 
     GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
     GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
@@ -119,9 +98,7 @@ static void startSoftUartTimer(void) {
     TIMER_CounterSet(TIMER1, 0);
     TIMER_Enable(TIMER1, true);
 
-    uint32_t timerFrequency = CMU_ClockFreqGet(cmuClock_TIMER1);
-    softUartTicksPerBit = (timerFrequency + ESPBRIDGE_DEFAULT_BAUD / 2) / ESPBRIDGE_DEFAULT_BAUD;
-    softUartTicksPerMillisecond = (timerFrequency + 500) / 1000;
+    updateUartTiming(ESPBRIDGE_DEFAULT_BAUD);
 }
 
 static void stopSoftUartTimer(void) {
@@ -135,6 +112,28 @@ static void stopSoftUartTimer(void) {
 static void configureBridgeUart(void) {
     configureBridgePins();
     startSoftUartTimer();
+
+    USART_InitAsync_TypeDef init = USART_INITASYNC_DEFAULT;
+    init.baudrate = ESPBRIDGE_DEFAULT_BAUD;
+    init.oversampling = oversamplingForBaud(ESPBRIDGE_DEFAULT_BAUD);
+    init.enable = usartEnable;
+    USART_InitAsync(BRIDGE_UART, &init);
+
+    BRIDGE_UART->ROUTE = UART_ROUTE_RXPEN | UART_ROUTE_TXPEN | BRIDGE_UART_LOCATION;
+    while (BRIDGE_UART->STATUS & USART_STATUS_RXDATAV) {
+        (void)BRIDGE_UART->RXDATA;
+    }
+}
+
+static void stopBridgeUart(void) {
+    while ((BRIDGE_UART->STATUS & USART_STATUS_TXC) == 0) {
+        WDOG_Feed();
+    }
+    USART_Reset(BRIDGE_UART);
+    CMU_ClockEnable(BRIDGE_UART_CLOCK, false);
+    GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
+    GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
+    stopSoftUartTimer();
 }
 
 static void softUartDelayTicks(uint32_t ticks) {
@@ -163,35 +162,20 @@ static inline bool rawRequestPinActive(void) {
 }
 
 static inline bool uartRxAvailable(void) {
-    return GPIO_PinInGet(BRIDGE_RX_PORT, BRIDGE_RX_PIN) == 0;
+    return (BRIDGE_UART->STATUS & USART_STATUS_RXDATAV) != 0;
 }
 
 static bool uartReadByte(uint8_t *byte) {
-    if (GPIO_PinInGet(BRIDGE_RX_PORT, BRIDGE_RX_PIN) != 0) return false;
-
-    softUartDelayTicks(softUartTicksPerBit + softUartTicksPerBit / 2);
-
-    uint8_t value = 0;
-    for (uint32_t bit = 0; bit < 8; bit += 1) {
-        if (GPIO_PinInGet(BRIDGE_RX_PORT, BRIDGE_RX_PIN)) value |= (1U << bit);
-        softUartDelayTicks(softUartTicksPerBit);
-    }
-
-    *byte = value;
+    if ((BRIDGE_UART->STATUS & USART_STATUS_RXDATAV) == 0) return false;
+    *byte = (uint8_t)BRIDGE_UART->RXDATA;
     return true;
 }
 
 static void uartWriteByte(uint8_t byte) {
-    gpioWrite(BRIDGE_TX_PORT, BRIDGE_TX_PIN, false);
-    softUartDelayTicks(softUartTicksPerBit);
-
-    for (uint32_t bit = 0; bit < 8; bit += 1) {
-        gpioWrite(BRIDGE_TX_PORT, BRIDGE_TX_PIN, (byte & (1U << bit)) != 0);
-        softUartDelayTicks(softUartTicksPerBit);
+    while ((BRIDGE_UART->STATUS & USART_STATUS_TXBL) == 0) {
+        WDOG_Feed();
     }
-
-    gpioWrite(BRIDGE_TX_PORT, BRIDGE_TX_PIN, true);
-    softUartDelayTicks(softUartTicksPerBit);
+    BRIDGE_UART->TXDATA = byte;
 }
 
 static void uartWrite(const void *data, uint32_t length) {
@@ -212,7 +196,7 @@ static void uartWriteUInt32LE(uint32_t value) {
 }
 
 static void sendLine(const char *fmt, ...) {
-    char out[192];
+    char out[256];
     va_list args;
     va_start(args, fmt);
     int n = vsnprintf(out, sizeof(out), fmt, args);
@@ -254,9 +238,14 @@ static bool readLine(uint32_t timeoutMs) {
 }
 
 static void bridgeSetBaud(uint32_t baud) {
-    uint32_t timerFrequency = CMU_ClockFreqGet(cmuClock_TIMER1);
-    softUartTicksPerBit = (timerFrequency + baud / 2) / baud;
-    if (softUartTicksPerBit == 0) softUartTicksPerBit = 1;
+    while ((BRIDGE_UART->STATUS & USART_STATUS_TXC) == 0) {
+        WDOG_Feed();
+    }
+    USART_BaudrateAsyncSet(BRIDGE_UART, 0, baud, oversamplingForBaud(baud));
+    updateUartTiming(baud);
+    while (BRIDGE_UART->STATUS & USART_STATUS_RXDATAV) {
+        (void)BRIDGE_UART->RXDATA;
+    }
 }
 
 /* ---------------- CRC and validation ---------------- */
@@ -648,6 +637,41 @@ static void commandGetStream(char *args) {
     }
 }
 
+static bool pipeAckAccepted(uint32_t frameOffset, uint16_t frameLength) {
+    unsigned long ackOffset = 0;
+    unsigned long ackLength = 0;
+
+    if (!readLine(ESPBRIDGE_PIPE_ACK_TIMEOUT_MS)) return false;
+
+    if (sscanf(lineBuffer, "ACK %lu %lu", &ackOffset, &ackLength) == 2) {
+        return ackOffset == (unsigned long)frameOffset && ackLength == (unsigned long)frameLength;
+    }
+
+    if (strncmp(lineBuffer, "NAK ", 4) == 0) return false;
+
+    return false;
+}
+
+static bool sendPipeFrameWithAck(const uint8_t *magic, uint32_t frameOffset, uint16_t frameLength,
+                                 uint32_t crc, uint32_t sdReadMilliseconds) {
+    for (uint32_t attempt = 0; attempt <= ESPBRIDGE_PIPE_FRAME_RETRIES; attempt += 1) {
+        WDOG_Feed();
+
+        if (attempt > 0) bridgeDelayMilliseconds(2);
+
+        uartWrite(magic, 4);
+        uartWriteUInt32LE(frameOffset);
+        uartWriteUInt16LE(frameLength);
+        uartWriteUInt32LE(crc);
+        uartWriteUInt32LE(sdReadMilliseconds);
+        uartWrite(chunkBuffer, frameLength);
+
+        if (pipeAckAccepted(frameOffset, frameLength)) return true;
+    }
+
+    return false;
+}
+
 static void commandGetPipe(char *args) {
     char path[ESPBRIDGE_MAX_PATH];
     unsigned long offset = 0;
@@ -753,12 +777,13 @@ static void commandGetPipe(char *args) {
 
             uint32_t frameOffset = blockOffset + blockSent;
             uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
-            uartWrite(streamMagic, sizeof(streamMagic));
-            uartWriteUInt32LE(frameOffset);
-            uartWriteUInt16LE((uint16_t)bytesRead);
-            uartWriteUInt32LE(crc);
-            uartWriteUInt32LE(sdReadMilliseconds);
-            uartWrite(chunkBuffer, bytesRead);
+            if (!sendPipeFrameWithAck(streamMagic, frameOffset, (uint16_t)bytesRead, crc, sdReadMilliseconds)) {
+                bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
+                bridgeDelayMilliseconds(5);
+                f_close(&file);
+                sendLine("ERR PIPE ack_failed %lu %u", (unsigned long)frameOffset, (unsigned int)bytesRead);
+                return;
+            }
 
             blockSent += bytesRead;
         }
@@ -930,7 +955,7 @@ static void commandTime(char *args) {
 static void commandStatus(uint32_t deadlineUnixSeconds) {
     uint32_t now, ms;
     AudioMoth_getTime(&now, &ms);
-    sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu proto=%u stream=%u stream_baud=%lu stream_bytes=%lu pipe=%u pipe_baud=%lu pipe_bytes=%lu",
+    sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu proto=%u stream=%u stream_baud=%lu stream_bytes=%lu pipe=%u pipe_baud=%lu pipe_bytes=%lu pipe_frame=%u pipe_ack=1",
              bridgeBusy ? 1 : 0,
              uploadAllowed ? 1 : 0,
              ESPBridge_isRequestActive() ? 1 : 0,
@@ -944,7 +969,8 @@ static void commandStatus(uint32_t deadlineUnixSeconds) {
              (unsigned long)ESPBRIDGE_STREAM_BYTES,
              ESPBRIDGE_PIPE_STREAM,
              (unsigned long)ESPBRIDGE_PIPE_BAUD,
-             (unsigned long)ESPBRIDGE_PIPE_BLOCK_BYTES);
+             (unsigned long)ESPBRIDGE_PIPE_BLOCK_BYTES,
+             ESPBRIDGE_PIPE_FRAME_BYTES);
 }
 
 static bool handleCommand(uint32_t deadlineUnixSeconds) {
@@ -1058,6 +1084,6 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     }
 
     sendLine("OK BRIDGE_SLEEP");
-    stopSoftUartTimer();
+    stopBridgeUart();
     serviceActive = false;
 }

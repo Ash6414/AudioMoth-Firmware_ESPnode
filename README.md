@@ -12,11 +12,11 @@ compatibility is intentionally being removed.
 - Firmware name: `AudioMoth-Firmware-Basic`
 - Control UART: `115200`
 - Fast one-way stream UARTs supported: `230400`, `460800`, `921600`
-- Current production upload path: `GETPIPE` at `230400` AudioMoth-to-ESP payload baud
+- Current production upload path: protocol v4 `GETPIPE` at `921600` AudioMoth-to-ESP payload baud
 - Fast stream startup: 20 ms guard, then `0x55` training bytes and framed binary data
 - Lower payload rates use a shorter 128-byte training preamble
-- UART file payload: 8192 bytes with CRC32
-- Pipe payload: up to 65536 bytes per server block, sent as CRC32-checked 8192-byte frames
+- UART pipe frame: 2048 bytes with CRC32 and ESP ACK/NAK retry
+- Pipe payload: up to 131072 bytes per server block, sent as CRC32-checked 2048-byte frames
 - Each data header reports SD read milliseconds for end-to-end bottleneck measurement
 - Bridge transport: EFM32 `UART1` LOC2 hardware route on PB9/PB10
 - RX handling: all ESP-to-AudioMoth commands remain at 115200 baud; UART1 is
@@ -41,19 +41,19 @@ compatibility is intentionally being removed.
 The 115200 control rate makes startup tolerant of resets and avoids the weak
 high-speed ESP-to-AudioMoth receive direction. A matching ESP uses `GETPIPE`
 to send one 115200-baud command, then AudioMoth keeps the SD file open and
-streams repeated 230400-baud payload blocks. Each block is split into framed
-8192-byte chunks with offset, length, CRC32, and SD-read milliseconds.
-AudioMoth returns to 115200 after each block and waits inside the same command
-for `NEXT <offset>`, so the ESP only advances after the server accepts the
-previous block. `GETSTREAM` and `GET` remain as compatibility fallbacks.
+streams repeated 921600-baud payload blocks. Each block is split into framed
+2048-byte chunks with offset, length, CRC32, and SD-read milliseconds. The ESP
+ACKs each good frame and NAKs bad frames so AudioMoth can resend before moving
+on. AudioMoth returns to 115200 after each 128 KiB block and waits inside the
+same command for `NEXT <offset>`, so the ESP only advances after the server
+accepts the previous block. `GET` remains as the compatibility fallback.
 
 For no-SD-card throughput diagnostics, the matching ESP can issue
 `TESTSTREAM <bytes> <baud>`. AudioMoth sends the same framed format as
 `GETSTREAM`, with predictable byte values and CRC32 per frame, so the ESP can
 measure the UART bottleneck before a real recording is available. The current
-4-inch 30 AWG bridge wiring validated 230400 baud with post-stream command
-resync. 460800 moved a 1 MiB payload by CRC but lost 115200 command control
-after the stream, and 921600 showed CRC corruption.
+production upload path uses ACKed 921600-baud frames so isolated byte errors are
+retried instead of failing the whole file.
 
 ## ESP32 wiring
 

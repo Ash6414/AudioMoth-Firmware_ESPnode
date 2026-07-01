@@ -213,6 +213,16 @@ def replace_once(text: str, old: str, new: str, label: str) -> tuple[str, bool]:
 
 
 def replace_uart_block(text: str) -> tuple[str, bool]:
+    has_v4_hardware_uart = (
+        "USART_InitAsync_TypeDef init = USART_INITASYNC_DEFAULT" in text
+        and "BRIDGE_UART->ROUTE = UART_ROUTE_RXPEN | UART_ROUTE_TXPEN | BRIDGE_UART_LOCATION" in text
+        and "USART_BaudrateAsyncSet(BRIDGE_UART, 0, baud, oversamplingForBaud(baud))" in text
+        and "BRIDGE_UART->STATUS & USART_STATUS_RXDATAV" in text
+        and "stopBridgeUart" in text
+    )
+    if has_v4_hardware_uart:
+        return text, False
+
     has_hardware_uart = (
         "USART_InitAsync_TypeDef uartInit" in text
         and "stopBridgeUart" in text
@@ -240,7 +250,10 @@ def replace_uart_block(text: str) -> tuple[str, bool]:
 def main() -> None:
     text = BRIDGE_C.read_text(encoding="utf-8")
     text, block_changed = replace_uart_block(text)
-    text, stop_changed = replace_once(text, "    stopSoftUartTimer();", "    stopBridgeUart();", "UART stop call")
+    if "\n    stopBridgeUart();\n    serviceActive = false;" in text:
+        stop_changed = False
+    else:
+        text, stop_changed = replace_once(text, "    stopSoftUartTimer();", "    stopBridgeUart();", "UART stop call")
     BRIDGE_C.write_text(text, encoding="utf-8")
 
     changed = []
