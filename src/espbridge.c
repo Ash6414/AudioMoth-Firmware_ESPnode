@@ -648,6 +648,170 @@ static void commandGetStream(char *args) {
     }
 }
 
+static void commandGetPipe(char *args) {
+    char path[ESPBRIDGE_MAX_PATH];
+    unsigned long offset = 0;
+    unsigned long requested = 0;
+    unsigned long baud = ESPBRIDGE_PIPE_BAUD;
+
+    if (bridgeBusy || !uploadAllowed) {
+        sendLine("ERR BUSY upload_not_allowed");
+        return;
+    }
+    if (sscanf(args, "%95s %lu %lu %lu", path, &offset, &requested, &baud) < 3) {
+        sendLine("ERR ARG usage_GETPIPE_path_offset_bytes_baud");
+        return;
+    }
+    if (!validPath(path, true)) {
+        sendLine("ERR PATH invalid_path");
+        return;
+    }
+    if (!supportedBaud((uint32_t)baud) || baud == ESPBRIDGE_DEFAULT_BAUD) {
+        sendLine("ERR ARG unsupported_baud");
+        return;
+    }
+    if (!ensureFilesystem()) {
+        sendLine("ERR SD filesystem_enable_failed");
+        return;
+    }
+
+    FIL file;
+    FRESULT res = f_open(&file, path, FA_READ);
+    if (res != FR_OK) {
+        sendLine("ERR OPEN %u", (unsigned int)res);
+        return;
+    }
+
+    FSIZE_t size = f_size(&file);
+    if ((FSIZE_t)offset > size) {
+        f_close(&file);
+        sendLine("ERR RANGE offset_past_eof");
+        return;
+    }
+
+    uint32_t available = (uint32_t)(size - (FSIZE_t)offset);
+    uint32_t totalBytes = (requested == 0 || requested > available) ? available : (uint32_t)requested;
+
+    res = f_lseek(&file, (FSIZE_t)offset);
+    if (res != FR_OK) {
+        f_close(&file);
+        sendLine("ERR SEEK %u", (unsigned int)res);
+        return;
+    }
+
+    sendLine("PIPE %s %lu %lu %lu %u %lu",
+             path,
+             offset,
+             (unsigned long)totalBytes,
+             (unsigned long)ESPBRIDGE_PIPE_BLOCK_BYTES,
+             ESPBRIDGE_CHUNK_BYTES,
+             baud);
+
+    if (totalBytes == 0) {
+        f_close(&file);
+        sendLine("OK PIPEDONE %s %lu 0", path, offset);
+        return;
+    }
+
+    static const uint8_t streamMagic[] = {0xA5, 0x5A, 0xD7, 0x7D};
+    uint32_t sentTotal = 0;
+    bool readError = false;
+
+    while (sentTotal < totalBytes) {
+        uint32_t blockOffset = (uint32_t)offset + sentTotal;
+        uint32_t blockRemaining = totalBytes - sentTotal;
+        uint32_t blockTarget = blockRemaining > ESPBRIDGE_PIPE_BLOCK_BYTES
+            ? ESPBRIDGE_PIPE_BLOCK_BYTES
+            : blockRemaining;
+        uint32_t blockSent = 0;
+
+        bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
+        bridgeSetBaud((uint32_t)baud);
+
+        uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
+            ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
+            : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
+        for (uint32_t i = 0; i < trainingBytes; i += 1) {
+            uartWriteByte(0x55);
+        }
+
+        while (blockSent < blockTarget) {
+            WDOG_Feed();
+            uint32_t remaining = blockTarget - blockSent;
+            UINT toRead = remaining > ESPBRIDGE_CHUNK_BYTES ? ESPBRIDGE_CHUNK_BYTES : (UINT)remaining;
+            UINT bytesRead = 0;
+
+            uint32_t readStartSeconds, readStartMilliseconds;
+            AudioMoth_getTime(&readStartSeconds, &readStartMilliseconds);
+            res = f_read(&file, chunkBuffer, toRead, &bytesRead);
+            uint32_t sdReadMilliseconds = elapsedServiceMilliseconds(readStartSeconds, readStartMilliseconds);
+
+            if (res != FR_OK || bytesRead == 0) {
+                readError = true;
+                break;
+            }
+
+            uint32_t frameOffset = blockOffset + blockSent;
+            uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
+            uartWrite(streamMagic, sizeof(streamMagic));
+            uartWriteUInt32LE(frameOffset);
+            uartWriteUInt16LE((uint16_t)bytesRead);
+            uartWriteUInt32LE(crc);
+            uartWriteUInt32LE(sdReadMilliseconds);
+            uartWrite(chunkBuffer, bytesRead);
+
+            blockSent += bytesRead;
+        }
+
+        bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
+        bridgeDelayMilliseconds(5);
+
+        if (readError || blockSent != blockTarget) {
+            f_close(&file);
+            sendLine("ERR PIPE read_failed %lu %lu",
+                     (unsigned long)(sentTotal + blockSent),
+                     (unsigned long)totalBytes);
+            return;
+        }
+
+        sentTotal += blockSent;
+        sendLine("OK PIPEBLOCK %s %lu %lu", path, (unsigned long)blockOffset, (unsigned long)blockSent);
+
+        if (sentTotal >= totalBytes) break;
+
+        if (!readLine(ESPBRIDGE_PIPE_NEXT_TIMEOUT_MS)) {
+            f_close(&file);
+            sendLine("ERR PIPE next_timeout %lu %lu",
+                     (unsigned long)sentTotal,
+                     (unsigned long)totalBytes);
+            return;
+        }
+
+        if (strcmp(lineBuffer, "STOP") == 0) {
+            f_close(&file);
+            sendLine("OK PIPESTOP %s %lu %lu", path, offset, (unsigned long)sentTotal);
+            return;
+        }
+
+        unsigned long nextOffset = 0;
+        if (strcmp(lineBuffer, "NEXT") != 0 &&
+            (sscanf(lineBuffer, "NEXT %lu", &nextOffset) != 1 ||
+             nextOffset != (unsigned long)((uint32_t)offset + sentTotal))) {
+            f_close(&file);
+            sendLine("ERR PIPE expected_NEXT");
+            return;
+        }
+    }
+
+    FRESULT closeRes = f_close(&file);
+    if (closeRes != FR_OK) {
+        sendLine("ERR CLOSE %u", (unsigned int)closeRes);
+        return;
+    }
+
+    sendLine("OK PIPEDONE %s %lu %lu", path, offset, (unsigned long)sentTotal);
+}
+
 static void fillTestStreamPayload(uint32_t offset, uint8_t *buffer, uint32_t length) {
     for (uint32_t i = 0; i < length; i += 1) {
         buffer[i] = (uint8_t)((offset + i) & 0xFFU);
@@ -766,7 +930,7 @@ static void commandTime(char *args) {
 static void commandStatus(uint32_t deadlineUnixSeconds) {
     uint32_t now, ms;
     AudioMoth_getTime(&now, &ms);
-    sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu proto=%u stream=%u stream_baud=%lu stream_bytes=%lu",
+    sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu proto=%u stream=%u stream_baud=%lu stream_bytes=%lu pipe=%u pipe_baud=%lu pipe_bytes=%lu",
              bridgeBusy ? 1 : 0,
              uploadAllowed ? 1 : 0,
              ESPBridge_isRequestActive() ? 1 : 0,
@@ -777,7 +941,10 @@ static void commandStatus(uint32_t deadlineUnixSeconds) {
              ESPBRIDGE_PROTOCOL_VERSION,
              ESPBRIDGE_CONTROL_BAUD_STREAM,
              (unsigned long)ESPBRIDGE_DEFAULT_BAUD,
-             (unsigned long)ESPBRIDGE_STREAM_BYTES);
+             (unsigned long)ESPBRIDGE_STREAM_BYTES,
+             ESPBRIDGE_PIPE_STREAM,
+             (unsigned long)ESPBRIDGE_PIPE_BAUD,
+             (unsigned long)ESPBRIDGE_PIPE_BLOCK_BYTES);
 }
 
 static bool handleCommand(uint32_t deadlineUnixSeconds) {
@@ -799,6 +966,8 @@ static bool handleCommand(uint32_t deadlineUnixSeconds) {
         commandGet(lineBuffer + 8, true);
     } else if (strncmp(lineBuffer, "GETSTREAM ", 10) == 0) {
         commandGetStream(lineBuffer + 10);
+    } else if (strncmp(lineBuffer, "GETPIPE ", 8) == 0) {
+        commandGetPipe(lineBuffer + 8);
     } else if (strncmp(lineBuffer, "TESTSTREAM ", 11) == 0) {
         commandTestStream(lineBuffer + 11);
     } else if (strncmp(lineBuffer, "DELETE ", 7) == 0) {

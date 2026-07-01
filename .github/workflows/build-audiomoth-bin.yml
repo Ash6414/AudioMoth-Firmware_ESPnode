@@ -77,8 +77,11 @@ jobs:
           grep -F 'static uint8_t firmwareVersion[AM_FIRMWARE_VERSION_LENGTH] = {1, 12, 0};' firmware/src/main.c
           grep -F 'static uint8_t firmwareDescription[AM_FIRMWARE_DESCRIPTION_LENGTH] = "AudioMoth-Firmware-Basic";' firmware/src/main.c
           grep -F '#define ESPBRIDGE_DEFAULT_BAUD              115200' firmware/inc/espbridge.h
-          grep -F '#define ESPBRIDGE_PROTOCOL_VERSION          2' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_PROTOCOL_VERSION          3' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_CONTROL_BAUD_STREAM       1' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_PIPE_STREAM               1' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_PIPE_BAUD                 230400' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_PIPE_BLOCK_BYTES          65536' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_FAST_BAUD                 921600' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_TRAINING_BYTES            1024' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES 1024' firmware/inc/espbridge.h
@@ -91,6 +94,7 @@ jobs:
           grep -F 'commandFastCapability' firmware/src/espbridge.c
           grep -F 'GETFAST ' firmware/src/espbridge.c
           grep -F 'GETSTREAM ' firmware/src/espbridge.c
+          grep -F 'GETPIPE ' firmware/src/espbridge.c
           grep -F 'sdReadMilliseconds' firmware/src/espbridge.c
           grep -F 'ESPBridge_handleReceivedByte' firmware/src/espbridge.c
           grep -F 'ESPBridge_handleReceivedByte(byte);' firmware/src/gps.c
@@ -152,8 +156,12 @@ jobs:
           grep -n 'USART_Rx(BRIDGE_UART)' project/src/espbridge.c
           grep -n 'FASTDATA ' project/src/espbridge.c
           grep -n 'GETSTREAM ' project/src/espbridge.c
+          grep -n 'GETPIPE ' project/src/espbridge.c
           grep -n 'TESTSTREAM ' project/src/espbridge.c
           grep -n 'STREAM %s' project/src/espbridge.c
+          grep -n 'PIPE %s' project/src/espbridge.c
+          grep -n 'OK PIPEBLOCK' project/src/espbridge.c
+          grep -n 'OK PIPEDONE' project/src/espbridge.c
           grep -n 'OK TESTSTREAM' project/src/espbridge.c
           grep -n 'OK FASTCAP' project/src/espbridge.c
           grep -n 'sdReadMilliseconds' project/src/espbridge.c
@@ -231,10 +239,13 @@ jobs:
           strings project/build/audiomoth.bin | grep -F 'FASTDATA'
           strings project/build/audiomoth.bin | grep -F 'GETSTREAM'
           strings project/build/audiomoth.bin | grep -F 'OK STREAM'
+          strings project/build/audiomoth.bin | grep -F 'GETPIPE'
+          strings project/build/audiomoth.bin | grep -F 'OK PIPEBLOCK'
+          strings project/build/audiomoth.bin | grep -F 'OK PIPEDONE'
           strings project/build/audiomoth.bin | grep -F 'TESTSTREAM'
           strings project/build/audiomoth.bin | grep -F 'OK TESTSTREAM'
           strings project/build/audiomoth.bin | grep -F 'SD total_kb='
-          strings project/build/audiomoth.bin | grep -F 'proto=%u stream=%u stream_baud=%lu stream_bytes=%lu'
+          strings project/build/audiomoth.bin | grep -F 'proto=%u stream=%u stream_baud=%lu stream_bytes=%lu pipe=%u pipe_baud=%lu pipe_bytes=%lu'
 
           mkdir -p firmware-artifacts
           cp -f project/build/audiomoth.bin firmware-artifacts/audiomoth.bin
@@ -252,7 +263,7 @@ jobs:
             echo "firmware_description=AudioMoth-Firmware-Basic"
             echo "firmware_version=1.12.0"
             echo "espbridge_control_baud=115200"
-            echo "espbridge_protocol_version=2"
+            echo "espbridge_protocol_version=3"
             echo "espbridge_fast_baud=921600"
             echo "espbridge_training_bytes=1024"
             echo "espbridge_fast_payload_training_bytes=1024"
@@ -262,6 +273,10 @@ jobs:
             echo "espbridge_stream_fast_baud=921600"
             echo "espbridge_stream_control_baud_supported=true"
             echo "espbridge_production_stream_baud=115200"
+            echo "espbridge_pipe_stream_supported=true"
+            echo "espbridge_pipe_baud=230400"
+            echo "espbridge_pipe_block_bytes=65536"
+            echo "espbridge_pipe_next_timeout_ms=120000"
             echo "espbridge_test_stream_bytes=1048576"
             echo "espbridge_sd_read_timing=header_milliseconds"
             echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
