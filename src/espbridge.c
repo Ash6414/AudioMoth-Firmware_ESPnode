@@ -42,7 +42,7 @@
 #define BRIDGE_REQUIRE_REQ_PIN              0
 
 #define RX_LINE_TIMEOUT_MS                  250
-#define SERVICE_IDLE_TIMEOUT_MS             3000
+#define SERVICE_IDLE_TIMEOUT_MS             30000
 #define SERVICE_MAX_WINDOW_MS               7200000
 #define SERVICE_READY_BEACON_MS             1000
 #define MILLISECONDS_PER_SECOND             1000
@@ -857,7 +857,7 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
         bool requestActive = ESPBridge_isRequestActive();
         bool rxAvailable = uartRxAvailable();
 
-        if (deadlineDone && !requestActive && !rxAvailable) break;
+        if (deadlineDone && !requestActive && !rxAvailable && idleMs >= SERVICE_IDLE_TIMEOUT_MS) break;
 
         if (!requestActive && !rxAvailable) {
             if (idleMs >= SERVICE_IDLE_TIMEOUT_MS) break;

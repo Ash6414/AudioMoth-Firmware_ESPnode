@@ -14,6 +14,11 @@ BRIDGE_C = Path("project/src/espbridge.c")
 
 REPLACEMENTS = [
     (
+        "#define SERVICE_IDLE_TIMEOUT_MS             3000",
+        "#define SERVICE_IDLE_TIMEOUT_MS             30000",
+        "service idle timeout",
+    ),
+    (
         "#define SERVICE_MAX_WINDOW_MS               30000",
         "#define SERVICE_MAX_WINDOW_MS               7200000",
         "service max window",
@@ -27,6 +32,11 @@ REPLACEMENTS = [
         "    uint32_t idleMs = 0;\n    uint32_t serviceStartSeconds, serviceStartMilliseconds;",
         "    uint32_t idleMs = 0;\n    uint32_t readyBeaconMs = 0;\n    uint32_t serviceStartSeconds, serviceStartMilliseconds;",
         "ready beacon counter",
+    ),
+    (
+        "        if (deadlineDone && !requestActive && !rxAvailable) break;",
+        "        if (deadlineDone && !requestActive && !rxAvailable && idleMs >= SERVICE_IDLE_TIMEOUT_MS) break;",
+        "deadline idle grace",
     ),
     (
         "        } else {\n            idleMs += RX_LINE_TIMEOUT_MS;\n        }",
