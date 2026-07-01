@@ -278,7 +278,7 @@ static void commandGetStream(char *args) {
         sendLine("ERR PATH invalid_path");
         return;
     }
-    if (!supportedBaud((uint32_t)baud) || baud == ESPBRIDGE_DEFAULT_BAUD) {
+    if (!supportedBaud((uint32_t)baud)) {
         sendLine("ERR ARG unsupported_baud");
         return;
     }
@@ -319,14 +319,16 @@ static void commandGetStream(char *args) {
 
     sendLine("STREAM %s %lu %lu %u %lu", path, offset, (unsigned long)totalBytes,
              ESPBRIDGE_CHUNK_BYTES, baud);
-    bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
-    bridgeSetBaud((uint32_t)baud);
+    if (baud != ESPBRIDGE_DEFAULT_BAUD) {
+        bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
+        bridgeSetBaud((uint32_t)baud);
 
-    uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
-        ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
-        : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
-    for (uint32_t i = 0; i < trainingBytes; i += 1) {
-        uartWriteByte(0x55);
+        uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
+            ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
+            : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
+        for (uint32_t i = 0; i < trainingBytes; i += 1) {
+            uartWriteByte(0x55);
+        }
     }
 
     static const uint8_t streamMagic[] = {0xA5, 0x5A, 0xD7, 0x7D};
@@ -363,8 +365,10 @@ static void commandGetStream(char *args) {
 
     FRESULT closeRes = f_close(&file);
     rawFilesystemEnd();
-    bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
-    bridgeDelayMilliseconds(5);
+    if (baud != ESPBRIDGE_DEFAULT_BAUD) {
+        bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
+        bridgeDelayMilliseconds(5);
+    }
 
     if (readError || sent != totalBytes) {
         sendLine("ERR STREAM read_failed %lu %lu", (unsigned long)sent, (unsigned long)totalBytes);
