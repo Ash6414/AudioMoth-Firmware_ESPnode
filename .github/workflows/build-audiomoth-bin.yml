@@ -256,6 +256,8 @@ jobs:
             echo "espbridge_chunk_bytes=8192"
             echo "espbridge_stream_bytes=65536"
             echo "espbridge_stream_fast_baud=921600"
+            echo "espbridge_stream_control_baud_supported=true"
+            echo "espbridge_production_stream_baud=115200"
             echo "espbridge_test_stream_bytes=1048576"
             echo "espbridge_sd_read_timing=header_milliseconds"
             echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
