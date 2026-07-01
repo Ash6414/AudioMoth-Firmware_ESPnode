@@ -77,6 +77,8 @@ jobs:
           grep -F 'static uint8_t firmwareVersion[AM_FIRMWARE_VERSION_LENGTH] = {1, 12, 0};' firmware/src/main.c
           grep -F 'static uint8_t firmwareDescription[AM_FIRMWARE_DESCRIPTION_LENGTH] = "AudioMoth-Firmware-Basic";' firmware/src/main.c
           grep -F '#define ESPBRIDGE_DEFAULT_BAUD              115200' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_PROTOCOL_VERSION          2' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_CONTROL_BAUD_STREAM       1' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_FAST_BAUD                 921600' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_TRAINING_BYTES            1024' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES 1024' firmware/inc/espbridge.h
@@ -232,6 +234,7 @@ jobs:
           strings project/build/audiomoth.bin | grep -F 'TESTSTREAM'
           strings project/build/audiomoth.bin | grep -F 'OK TESTSTREAM'
           strings project/build/audiomoth.bin | grep -F 'SD total_kb='
+          strings project/build/audiomoth.bin | grep -F 'proto=%u stream=%u stream_baud=%lu stream_bytes=%lu'
 
           mkdir -p firmware-artifacts
           cp -f project/build/audiomoth.bin firmware-artifacts/audiomoth.bin
@@ -249,6 +252,7 @@ jobs:
             echo "firmware_description=AudioMoth-Firmware-Basic"
             echo "firmware_version=1.12.0"
             echo "espbridge_control_baud=115200"
+            echo "espbridge_protocol_version=2"
             echo "espbridge_fast_baud=921600"
             echo "espbridge_training_bytes=1024"
             echo "espbridge_fast_payload_training_bytes=1024"

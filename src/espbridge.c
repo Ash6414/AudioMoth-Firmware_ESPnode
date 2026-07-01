@@ -766,14 +766,18 @@ static void commandTime(char *args) {
 static void commandStatus(uint32_t deadlineUnixSeconds) {
     uint32_t now, ms;
     AudioMoth_getTime(&now, &ms);
-    sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu",
+    sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu proto=%u stream=%u stream_baud=%lu stream_bytes=%lu",
              bridgeBusy ? 1 : 0,
              uploadAllowed ? 1 : 0,
              ESPBridge_isRequestActive() ? 1 : 0,
              rawRequestPinActive() ? 1 : 0,
              (unsigned long)now,
              (unsigned long)ms,
-             (unsigned long)deadlineUnixSeconds);
+             (unsigned long)deadlineUnixSeconds,
+             ESPBRIDGE_PROTOCOL_VERSION,
+             ESPBRIDGE_CONTROL_BAUD_STREAM,
+             (unsigned long)ESPBRIDGE_DEFAULT_BAUD,
+             (unsigned long)ESPBRIDGE_STREAM_BYTES);
 }
 
 static bool handleCommand(uint32_t deadlineUnixSeconds) {

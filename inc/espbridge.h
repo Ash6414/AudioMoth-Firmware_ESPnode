@@ -14,6 +14,8 @@
 #include <stdbool.h>
 
 #define ESPBRIDGE_DEFAULT_BAUD              115200
+#define ESPBRIDGE_PROTOCOL_VERSION          2
+#define ESPBRIDGE_CONTROL_BAUD_STREAM       1
 #define ESPBRIDGE_FAST_BAUD                 921600
 #define ESPBRIDGE_TRAINING_BYTES            1024
 #define ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES 1024
