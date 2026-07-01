@@ -80,7 +80,7 @@ jobs:
           grep -F '#define ESPBRIDGE_PROTOCOL_VERSION          4' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_CONTROL_BAUD_STREAM       1' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_STREAM               1' firmware/inc/espbridge.h
-          grep -F '#define ESPBRIDGE_PIPE_BAUD                 921600' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_PIPE_BAUD                 230400' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_BLOCK_BYTES          131072' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_FRAME_BYTES          2048' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_FRAME_RETRIES        3' firmware/inc/espbridge.h
@@ -273,7 +273,7 @@ jobs:
             echo "espbridge_stream_control_baud_supported=true"
             echo "espbridge_production_stream_baud=115200"
             echo "espbridge_pipe_stream_supported=true"
-            echo "espbridge_pipe_baud=921600"
+            echo "espbridge_pipe_baud=230400"
             echo "espbridge_pipe_block_bytes=131072"
             echo "espbridge_pipe_frame_bytes=2048"
             echo "espbridge_pipe_frame_retries=3"
@@ -282,7 +282,7 @@ jobs:
             echo "espbridge_test_stream_bytes=1048576"
             echo "espbridge_sd_read_timing=header_milliseconds"
             echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
-            echo "espbridge_request_service=hardware_uart1_115200_control_921600baud_acked_pipe_idle_file_service_default_or_custom_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
+            echo "espbridge_request_service=hardware_uart1_115200_control_230400baud_acked_pipe_idle_file_service_default_or_custom_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
             echo "espbridge_max_session_seconds=7200"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt
