@@ -12,14 +12,16 @@ compatibility is intentionally being removed.
 - Firmware name: `AudioMoth-Firmware-Basic`
 - Control UART: `115200`
 - Fast one-way stream UARTs supported: `230400`, `460800`, `921600`
-- Current measured production ESP stream baud: `460800`
+- Current measured production ESP stream baud: `230400`
 - Fast stream startup: 20 ms guard, 1024 bytes of `0x55`, then framed binary data
 - Lower payload rates use a shorter 128-byte training preamble
 - UART file payload: 8192 bytes with CRC32
 - Fast stream payload: up to 65536 bytes per slow command, sent as CRC32-checked 8192-byte frames
 - Each data header reports SD read milliseconds for end-to-end bottleneck measurement
 - Bridge transport: EFM32 `UART1` LOC2 hardware route on PB9/PB10
-- RX handling: all ESP-to-AudioMoth commands remain at 115200 baud
+- RX handling: all ESP-to-AudioMoth commands remain at 115200 baud; UART1 is
+  polled directly with the interrupt buffer as a backup so SD-backed streams
+  can keep accepting control commands after each chunk
 - ESP request pin: PA7
 - AudioMoth busy pin: PA8
 - GPS support: disabled so the bridge owns PA7, PA8, PB9, PB10, and UART1
@@ -45,8 +47,9 @@ For no-SD-card throughput diagnostics, the matching ESP can issue
 `TESTSTREAM <bytes> <baud>`. AudioMoth sends the same framed format as
 `GETSTREAM`, with predictable byte values and CRC32 per frame, so the ESP can
 measure the UART bottleneck before a real recording is available. The current
-4-inch 30 AWG bridge wiring validated 460800 baud and showed CRC corruption at
-921600 baud.
+4-inch 30 AWG bridge wiring validated 230400 baud with post-stream command
+resync. 460800 moved a 1 MiB payload by CRC but lost 115200 command control
+after the stream, and 921600 showed CRC corruption.
 
 ## ESP32 wiring
 

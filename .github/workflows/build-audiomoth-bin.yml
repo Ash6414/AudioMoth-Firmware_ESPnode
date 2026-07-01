@@ -146,6 +146,8 @@ jobs:
           grep -n 'bridgeSetBaud' project/src/espbridge.c
           grep -n 'USART_IntEnable(BRIDGE_UART, UART_IF_RXDATAV)' project/src/espbridge.c
           grep -n 'bufferedRxRead' project/src/espbridge.c
+          grep -n 'BRIDGE_UART->STATUS & UART_STATUS_RXDATAV' project/src/espbridge.c
+          grep -n 'USART_Rx(BRIDGE_UART)' project/src/espbridge.c
           grep -n 'FASTDATA ' project/src/espbridge.c
           grep -n 'GETSTREAM ' project/src/espbridge.c
           grep -n 'TESTSTREAM ' project/src/espbridge.c
@@ -258,7 +260,7 @@ jobs:
             echo "espbridge_sd_read_timing=header_milliseconds"
             echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
             echo "espbridge_uart1_rx_poll_us=50"
-            echo "espbridge_request_service=hardware_uart1_interrupt_rx_115200_control_921600baud_tx_payload_idle_file_service_default_or_custom_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
+            echo "espbridge_request_service=hardware_uart1_polled_rx_with_interrupt_buffer_115200_control_921600baud_tx_payload_idle_file_service_default_or_custom_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
             echo "espbridge_max_session_seconds=7200"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt

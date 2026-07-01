@@ -131,11 +131,14 @@ static inline bool rawRequestPinActive(void) {
 }
 
 static inline bool uartRxAvailable(void) {
-    return bufferedRxAvailable();
+    return bufferedRxAvailable() || (BRIDGE_UART->STATUS & UART_STATUS_RXDATAV);
 }
 
 static bool uartReadByte(uint8_t *byte) {
-    return bufferedRxRead(byte);
+    if (bufferedRxRead(byte)) return true;
+    if ((BRIDGE_UART->STATUS & UART_STATUS_RXDATAV) == 0) return false;
+    *byte = USART_Rx(BRIDGE_UART);
+    return true;
 }
 
 static void uartWriteByte(uint8_t byte) {
@@ -210,7 +213,12 @@ def replace_once(text: str, old: str, new: str, label: str) -> tuple[str, bool]:
 
 
 def replace_uart_block(text: str) -> tuple[str, bool]:
-    if "USART_InitAsync_TypeDef uartInit" in text and "stopBridgeUart" in text:
+    if (
+        "USART_InitAsync_TypeDef uartInit" in text
+        and "stopBridgeUart" in text
+        and "BRIDGE_UART->STATUS & UART_STATUS_RXDATAV" in text
+        and "USART_Rx(BRIDGE_UART)" in text
+    ):
         return text, False
 
     start = text.find(BLOCK_START)
