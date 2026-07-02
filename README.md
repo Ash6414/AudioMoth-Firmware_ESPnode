@@ -12,7 +12,7 @@ compatibility is intentionally being removed.
 - Firmware name: `AudioMoth-Firmware-Basic`
 - Control UART: `115200`
 - Fast one-way stream UARTs supported: `230400`, `460800`, `921600`
-- Current production upload path: protocol v4 `GETPIPE` at tested-stable `230400` AudioMoth-to-ESP payload baud
+- Current production upload path: protocol v4 ACKed `GETPIPE` at stable `115200` AudioMoth-to-ESP payload baud
 - Fast stream startup: 20 ms guard, then `0x55` training bytes and framed binary data
 - Lower payload rates use a shorter 128-byte training preamble
 - UART pipe frame: 2048 bytes with CRC32 and ESP ACK/NAK retry
@@ -38,21 +38,21 @@ compatibility is intentionally being removed.
 - File discovery does not require a `.WAV` suffix
 - `LIST` emits `SD total_kb=... free_kb=...` before file entries
 
-The 115200 control rate makes startup tolerant of resets and avoids the weak
+The 115200 bridge rate makes startup tolerant of resets and avoids the weak
 high-speed ESP-to-AudioMoth receive direction. A matching ESP uses `GETPIPE`
 to send one 115200-baud command, then AudioMoth keeps the SD file open and
-streams repeated 230400-baud payload blocks. Each block is split into framed
+streams repeated 115200-baud payload blocks. Each block is split into framed
 2048-byte chunks with offset, length, CRC32, and SD-read milliseconds. The ESP
 ACKs each good frame and NAKs bad frames so AudioMoth can resend before moving
-on. AudioMoth returns to 115200 after each 64 KiB block and waits inside the
-same command for `NEXT <offset>`, so the ESP only advances after the server
-accepts the previous block. `GET` remains as the compatibility fallback.
+on. AudioMoth waits inside the same command for `NEXT <offset>` after each
+64 KiB block, so the ESP only advances after the server accepts the previous
+block. `GET` remains as the compatibility fallback.
 
 For no-SD-card throughput diagnostics, the matching ESP can issue
 `TESTSTREAM <bytes> <baud>`. AudioMoth sends the same framed format as
 `GETSTREAM`, with predictable byte values and CRC32 per frame, so the ESP can
 measure the UART bottleneck before a real recording is available. The current
-production upload path uses ACKed 230400-baud frames so isolated byte errors are
+production upload path uses ACKed 115200-baud frames so isolated byte errors are
 retried instead of failing the whole file.
 
 The bridge keeps the raw PA7 request-pin state separate from logical UART

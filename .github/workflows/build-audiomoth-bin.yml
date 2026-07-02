@@ -80,7 +80,7 @@ jobs:
           grep -F '#define ESPBRIDGE_PROTOCOL_VERSION          4' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_CONTROL_BAUD_STREAM       1' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_STREAM               1' firmware/inc/espbridge.h
-          grep -F '#define ESPBRIDGE_PIPE_BAUD                 230400' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_PIPE_BAUD                 115200' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_BLOCK_BYTES          65536' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_FRAME_BYTES          2048' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_FRAME_RETRIES        3' firmware/inc/espbridge.h
@@ -189,6 +189,8 @@ jobs:
           grep -n 'ESPBridge_hasAcceptedTime' project/src/espbridge.c
           grep -n 'fileCommandsAllowed' project/src/espbridge.c
           grep -n 'rawFilesystemBegin' project/src/espbridge.c
+          grep -n 'ACK %lu %lu' project/src/espbridge.c
+          grep -n 'sendPipeFrameWithAck' project/src/espbridge.c
           grep -n 'AudioMoth_restartSDCardClock' project/src/espbridge.c
           grep -n 'INFO ENTRY' project/src/espbridge.c
           grep -n 'SKIP_ATTR' project/src/espbridge.c
@@ -277,7 +279,7 @@ jobs:
             echo "espbridge_stream_control_baud_supported=true"
             echo "espbridge_production_stream_baud=115200"
             echo "espbridge_pipe_stream_supported=true"
-            echo "espbridge_pipe_baud=230400"
+            echo "espbridge_pipe_baud=115200"
             echo "espbridge_pipe_block_bytes=65536"
             echo "espbridge_pipe_frame_bytes=2048"
             echo "espbridge_pipe_frame_retries=3"
@@ -287,7 +289,7 @@ jobs:
             echo "espbridge_test_stream_bytes=1048576"
             echo "espbridge_sd_read_timing=header_milliseconds"
             echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
-            echo "espbridge_request_service=hardware_uart1_115200_control_230400baud_acked_pipe_idle_file_service_default_or_custom_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
+            echo "espbridge_request_service=hardware_uart1_115200_control_115200baud_acked_pipe_idle_file_service_default_or_custom_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
             echo "service_window_fix=raw_pa7_time_sync_upload_scheduler_split_esp_time_accept_latch"
             echo "espbridge_time_accept_latch=true"
             echo "espbridge_max_session_seconds=7200"

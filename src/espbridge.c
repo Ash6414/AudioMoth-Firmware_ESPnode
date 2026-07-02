@@ -691,7 +691,7 @@ static void commandGetPipe(char *args) {
         sendLine("ERR PATH invalid_path");
         return;
     }
-    if (!supportedBaud((uint32_t)baud) || baud == ESPBRIDGE_DEFAULT_BAUD) {
+    if (!supportedBaud((uint32_t)baud)) {
         sendLine("ERR ARG unsupported_baud");
         return;
     }
@@ -750,14 +750,16 @@ static void commandGetPipe(char *args) {
             : blockRemaining;
         uint32_t blockSent = 0;
 
-        bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
-        bridgeSetBaud((uint32_t)baud);
+        if (baud != ESPBRIDGE_DEFAULT_BAUD) {
+            bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
+            bridgeSetBaud((uint32_t)baud);
 
-        uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
-            ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
-            : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
-        for (uint32_t i = 0; i < trainingBytes; i += 1) {
-            uartWriteByte(0x55);
+            uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
+                ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
+                : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
+            for (uint32_t i = 0; i < trainingBytes; i += 1) {
+                uartWriteByte(0x55);
+            }
         }
 
         while (blockSent < blockTarget) {
@@ -779,8 +781,10 @@ static void commandGetPipe(char *args) {
             uint32_t frameOffset = blockOffset + blockSent;
             uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
             if (!sendPipeFrameWithAck(streamMagic, frameOffset, (uint16_t)bytesRead, crc, sdReadMilliseconds)) {
-                bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
-                bridgeDelayMilliseconds(5);
+                if (baud != ESPBRIDGE_DEFAULT_BAUD) {
+                    bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
+                    bridgeDelayMilliseconds(5);
+                }
                 f_close(&file);
                 sendLine("ERR PIPE ack_failed %lu %u", (unsigned long)frameOffset, (unsigned int)bytesRead);
                 return;
@@ -789,8 +793,10 @@ static void commandGetPipe(char *args) {
             blockSent += bytesRead;
         }
 
-        bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
-        bridgeDelayMilliseconds(5);
+        if (baud != ESPBRIDGE_DEFAULT_BAUD) {
+            bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
+            bridgeDelayMilliseconds(5);
+        }
 
         if (readError || blockSent != blockTarget) {
             f_close(&file);

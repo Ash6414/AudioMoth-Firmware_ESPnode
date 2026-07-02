@@ -442,6 +442,40 @@ static void commandGetStream(char *args) {
     }
 }
 
+static bool pipeAckAccepted(uint32_t frameOffset, uint16_t frameLength) {
+    if (!readLine(ESPBRIDGE_PIPE_ACK_TIMEOUT_MS)) return false;
+
+    unsigned long ackOffset = 0;
+    unsigned long ackLength = 0;
+    if (sscanf(lineBuffer, "ACK %lu %lu", &ackOffset, &ackLength) == 2) {
+        return ackOffset == frameOffset && ackLength == frameLength;
+    }
+
+    if (strncmp(lineBuffer, "NAK ", 4) == 0) return false;
+
+    return false;
+}
+
+static bool sendPipeFrameWithAck(const uint8_t *magic, uint32_t frameOffset, uint16_t frameLength,
+                                 uint32_t crc, uint32_t sdReadMilliseconds) {
+    for (uint32_t attempt = 0; attempt <= ESPBRIDGE_PIPE_FRAME_RETRIES; attempt += 1) {
+        WDOG_Feed();
+
+        if (attempt > 0) bridgeDelayMilliseconds(2);
+
+        uartWrite(magic, 4);
+        uartWriteUInt32LE(frameOffset);
+        uartWriteUInt16LE(frameLength);
+        uartWriteUInt32LE(crc);
+        uartWriteUInt32LE(sdReadMilliseconds);
+        uartWrite(chunkBuffer, frameLength);
+
+        if (pipeAckAccepted(frameOffset, frameLength)) return true;
+    }
+
+    return false;
+}
+
 static void commandGetPipe(char *args) {
     char path[ESPBRIDGE_MAX_PATH];
     unsigned long offset = 0;
@@ -460,7 +494,7 @@ static void commandGetPipe(char *args) {
         sendLine("ERR PATH invalid_path");
         return;
     }
-    if (!supportedBaud((uint32_t)baud) || baud == ESPBRIDGE_DEFAULT_BAUD) {
+    if (!supportedBaud((uint32_t)baud)) {
         sendLine("ERR ARG unsupported_baud");
         return;
     }
@@ -525,14 +559,16 @@ static void commandGetPipe(char *args) {
             : blockRemaining;
         uint32_t blockSent = 0;
 
-        bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
-        bridgeSetBaud((uint32_t)baud);
+        if (baud != ESPBRIDGE_DEFAULT_BAUD) {
+            bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
+            bridgeSetBaud((uint32_t)baud);
 
-        uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
-            ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
-            : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
-        for (uint32_t i = 0; i < trainingBytes; i += 1) {
-            uartWriteByte(0x55);
+            uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
+                ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
+                : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
+            for (uint32_t i = 0; i < trainingBytes; i += 1) {
+                uartWriteByte(0x55);
+            }
         }
 
         while (blockSent < blockTarget) {
@@ -553,18 +589,24 @@ static void commandGetPipe(char *args) {
 
             uint32_t frameOffset = blockOffset + blockSent;
             uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
-            uartWrite(streamMagic, sizeof(streamMagic));
-            uartWriteUInt32LE(frameOffset);
-            uartWriteUInt16LE((uint16_t)bytesRead);
-            uartWriteUInt32LE(crc);
-            uartWriteUInt32LE(sdReadMilliseconds);
-            uartWrite(chunkBuffer, bytesRead);
+            if (!sendPipeFrameWithAck(streamMagic, frameOffset, (uint16_t)bytesRead, crc, sdReadMilliseconds)) {
+                if (baud != ESPBRIDGE_DEFAULT_BAUD) {
+                    bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
+                    bridgeDelayMilliseconds(5);
+                }
+                f_close(&file);
+                rawFilesystemEnd();
+                sendLine("ERR PIPE ack_failed %lu %u", (unsigned long)frameOffset, (unsigned int)bytesRead);
+                return;
+            }
 
             blockSent += bytesRead;
         }
 
-        bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
-        bridgeDelayMilliseconds(5);
+        if (baud != ESPBRIDGE_DEFAULT_BAUD) {
+            bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
+            bridgeDelayMilliseconds(5);
+        }
 
         if (readError || blockSent != blockTarget) {
             f_close(&file);
