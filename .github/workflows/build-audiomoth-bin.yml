@@ -277,6 +277,7 @@ jobs:
             echo "espbridge_pipe_block_bytes=131072"
             echo "espbridge_pipe_frame_bytes=2048"
             echo "espbridge_pipe_frame_retries=3"
+            echo "espbridge_pipe_ack=true"
             echo "espbridge_pipe_next_timeout_ms=120000"
             echo "espbridge_pipe_ack_timeout_ms=750"
             echo "espbridge_test_stream_bytes=1048576"
