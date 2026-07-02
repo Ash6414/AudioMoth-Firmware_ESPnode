@@ -81,7 +81,7 @@ jobs:
           grep -F '#define ESPBRIDGE_CONTROL_BAUD_STREAM       1' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_STREAM               1' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_BAUD                 230400' firmware/inc/espbridge.h
-          grep -F '#define ESPBRIDGE_PIPE_BLOCK_BYTES          131072' firmware/inc/espbridge.h
+          grep -F '#define ESPBRIDGE_PIPE_BLOCK_BYTES          65536' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_FRAME_BYTES          2048' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_PIPE_FRAME_RETRIES        3' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_FAST_BAUD                 921600' firmware/inc/espbridge.h
@@ -278,7 +278,7 @@ jobs:
             echo "espbridge_production_stream_baud=115200"
             echo "espbridge_pipe_stream_supported=true"
             echo "espbridge_pipe_baud=230400"
-            echo "espbridge_pipe_block_bytes=131072"
+            echo "espbridge_pipe_block_bytes=65536"
             echo "espbridge_pipe_frame_bytes=2048"
             echo "espbridge_pipe_frame_retries=3"
             echo "espbridge_pipe_ack=true"

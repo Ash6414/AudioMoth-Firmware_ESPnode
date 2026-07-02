@@ -16,7 +16,7 @@ compatibility is intentionally being removed.
 - Fast stream startup: 20 ms guard, then `0x55` training bytes and framed binary data
 - Lower payload rates use a shorter 128-byte training preamble
 - UART pipe frame: 2048 bytes with CRC32 and ESP ACK/NAK retry
-- Pipe payload: up to 131072 bytes per server block, sent as CRC32-checked 2048-byte frames
+- Pipe payload: up to 65536 bytes per server block, sent as CRC32-checked 2048-byte frames
 - Each data header reports SD read milliseconds for end-to-end bottleneck measurement
 - Bridge transport: EFM32 `UART1` LOC2 hardware route on PB9/PB10
 - RX handling: all ESP-to-AudioMoth commands remain at 115200 baud; UART1 is
@@ -44,7 +44,7 @@ to send one 115200-baud command, then AudioMoth keeps the SD file open and
 streams repeated 230400-baud payload blocks. Each block is split into framed
 2048-byte chunks with offset, length, CRC32, and SD-read milliseconds. The ESP
 ACKs each good frame and NAKs bad frames so AudioMoth can resend before moving
-on. AudioMoth returns to 115200 after each 128 KiB block and waits inside the
+on. AudioMoth returns to 115200 after each 64 KiB block and waits inside the
 same command for `NEXT <offset>`, so the ESP only advances after the server
 accepts the previous block. `GET` remains as the compatibility fallback.
 
