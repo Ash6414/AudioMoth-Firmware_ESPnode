@@ -19,10 +19,10 @@ STARTUP_ANCHOR = r'''    AM_switchPosition_t switchPosition = AudioMoth_getSwitc
 STARTUP_BLOCK = r'''
     /* ESP32 startup request service.
      *
-     * If the ESP32 is already asserting ESP_REQ when bridge firmware starts,
+     * If the ESP32 is already asserting the physical ESP_REQ pin when bridge firmware starts,
      * answer UART immediately before normal configuration/scheduler handling.
      * File upload remains disabled in this early window. */
-    if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) && ESPBridge_isRequestActive()) {
+    if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) && ESPBridge_isHardwareRequestActive()) {
 
         ESPBridge_setBusy(false);
         ESPBridge_setUploadAllowed(false);

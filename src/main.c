@@ -1832,18 +1832,18 @@ int main(void) {
      */
 
     if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) &&
-        (AudioMoth_hasTimeBeenSet() == false || ESPBridge_isRequestActive())) {
+        (AudioMoth_hasTimeBeenSet() == false || ESPBridge_isHardwareRequestActive())) {
 
         uint32_t waitedMilliseconds = 0;
 
         ESPBridge_setBusy(false);
         ESPBridge_setUploadAllowed(false);
 
-        while ((AudioMoth_hasTimeBeenSet() == false || ESPBridge_isRequestActive()) && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {
+        while ((AudioMoth_hasTimeBeenSet() == false || ESPBridge_isHardwareRequestActive()) && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {
 
             AudioMoth_feedWatchdog();
 
-            if (ESPBridge_isRequestActive()) {
+            if (AudioMoth_hasTimeBeenSet() == false || ESPBridge_isHardwareRequestActive()) {
 
                 uint32_t bridgeCurrentTime;
                 uint32_t bridgeCurrentMilliseconds;

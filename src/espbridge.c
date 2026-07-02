@@ -1040,6 +1040,10 @@ bool ESPBridge_isRequestActive(void) {
 #endif
 }
 
+bool ESPBridge_isHardwareRequestActive(void) {
+    return rawRequestPinActive();
+}
+
 void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
     if (bridgeBusy || serviceActive) return;
 

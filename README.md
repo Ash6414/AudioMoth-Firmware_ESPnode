@@ -31,7 +31,7 @@ compatibility is intentionally being removed.
 - `OK BRIDGE_READY` repeats while the bridge service is idle
 - `PING`, `STATUS`, `TIME`, `FASTCAP`, and `DONE` work in the bridge window
 - `LIST`, `GET`, `GETFAST`, `GETSTREAM`, `GETPIPE`, and `DELETE` work while
-  bridge service is active and the AudioMoth is not busy recording
+  bridge service is active and the scheduler has marked file upload safe
 - `TESTSTREAM` sends a deterministic 1 MiB max framed stream without touching SD, for UART speed checks
 - `LIST` recursively walks SD card folders up to 4 levels deep
 - `LIST` includes any regular SD file except `CONFIG.TXT` / `config.txt`
@@ -54,6 +54,11 @@ For no-SD-card throughput diagnostics, the matching ESP can issue
 measure the UART bottleneck before a real recording is available. The current
 production upload path uses ACKed 230400-baud frames so isolated byte errors are
 retried instead of failing the whole file.
+
+The bridge keeps the raw PA7 request-pin state separate from logical UART
+service availability. This lets the AudioMoth leave its time-sync service
+window after the ESP sets time, then enter the later upload-safe service window
+even on builds where PA7 is not sampled reliably.
 
 ## ESP32 wiring
 

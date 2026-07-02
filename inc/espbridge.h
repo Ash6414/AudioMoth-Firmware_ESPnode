@@ -48,8 +48,11 @@ void ESPBridge_setBusy(bool busy);
 /* True only when the main scheduler has enough time before the next recording. */
 void ESPBridge_setUploadAllowed(bool allowed);
 
-/* Reads the ESP request pin. */
+/* True when the bridge should accept UART commands in the current service window. */
 bool ESPBridge_isRequestActive(void);
+
+/* Raw PA7 hardware request pin state, used to avoid confusing time-sync with upload service. */
+bool ESPBridge_isHardwareRequestActive(void);
 
 /* Services UART commands until deadlineUnixSeconds, request pin release, or idle timeout. */
 void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds);

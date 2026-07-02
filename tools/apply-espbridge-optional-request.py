@@ -3,9 +3,9 @@
 
 The ESP32 still drives ESP_REQ, but this build must also keep the UART service
 alive when PA7 is not being sampled correctly. For the transfer prototype, file
-commands are allowed whenever the AudioMoth bridge service is active and the
-firmware is not busy recording, instead of waiting for the scheduler's separate
-uploadAllowed flag. LIST walks a few folder levels, emits INFO ENTRY lines for
+commands are allowed whenever the AudioMoth bridge service is active, the
+firmware is not busy recording, and the scheduler has marked uploads safe.
+LIST walks a few folder levels, emits INFO ENTRY lines for
 visible protocol-safe entries, skips CONFIG.TXT, and skips hidden/system or
 path-unsafe SD entries such as Windows' System Volume Information. Raw FatFs
 LIST/GET/DELETE operations keep the SD card clock powered while touching the
@@ -67,7 +67,7 @@ NEW_ENSURE_FILESYSTEM = """static bool ensureFilesystem(void) {
 }
 
 static bool fileCommandsAllowed(void) {
-    return !bridgeBusy && serviceActive;
+    return !bridgeBusy && uploadAllowed && serviceActive;
 }
 
 static void rawFilesystemBegin(void) {
