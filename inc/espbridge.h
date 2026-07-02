@@ -54,6 +54,9 @@ bool ESPBridge_isRequestActive(void);
 /* Raw PA7 hardware request pin state, used to avoid confusing time-sync with upload service. */
 bool ESPBridge_isHardwareRequestActive(void);
 
+/* True after the ESP32 has sent a valid TIME command in this boot. */
+bool ESPBridge_hasAcceptedTime(void);
+
 /* Services UART commands until deadlineUnixSeconds, request pin release, or idle timeout. */
 void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds);
 

@@ -24,6 +24,63 @@ NEW_REQUIRE = "#define BRIDGE_REQUIRE_REQ_PIN              0"
 OLD_SERVICE_READ = "        bool requestActive = rawRequestPinActive();"
 NEW_SERVICE_READ = "        bool requestActive = ESPBridge_isRequestActive();"
 
+OLD_STATE_FLAGS = """static volatile bool uploadAllowed = false;
+static bool filesystemEnabled = false;
+static bool serviceActive = false;
+static uint32_t fastPayloadBaud = ESPBRIDGE_FAST_BAUD;
+"""
+
+NEW_STATE_FLAGS = """static volatile bool uploadAllowed = false;
+static bool filesystemEnabled = false;
+static bool serviceActive = false;
+static volatile bool espTimeAccepted = false;
+static uint32_t fastPayloadBaud = ESPBRIDGE_FAST_BAUD;
+"""
+
+OLD_TIME_ACCEPT = """    if (milliseconds > 999) milliseconds = 999;
+    AudioMoth_setTime((uint32_t)seconds, (uint32_t)milliseconds);
+    sendLine("OK TIME %lu %lu", seconds, milliseconds);
+}
+"""
+
+NEW_TIME_ACCEPT = """    if (milliseconds > 999) milliseconds = 999;
+    AudioMoth_setTime((uint32_t)seconds, (uint32_t)milliseconds);
+    espTimeAccepted = true;
+    sendLine("OK TIME %lu %lu", seconds, milliseconds);
+}
+"""
+
+OLD_INIT_FLAGS = """    uploadAllowed = false;
+    filesystemEnabled = false;
+    serviceActive = false;
+}
+"""
+
+NEW_INIT_FLAGS = """    uploadAllowed = false;
+    filesystemEnabled = false;
+    serviceActive = false;
+    espTimeAccepted = false;
+}
+"""
+
+OLD_TIME_ACCEPT_API = """bool ESPBridge_isHardwareRequestActive(void) {
+    return rawRequestPinActive();
+}
+
+void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
+"""
+
+NEW_TIME_ACCEPT_API = """bool ESPBridge_isHardwareRequestActive(void) {
+    return rawRequestPinActive();
+}
+
+bool ESPBridge_hasAcceptedTime(void) {
+    return espTimeAccepted;
+}
+
+void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
+"""
+
 OLD_PATH_MAY = """static bool pathMayBeAudioFile(const char *path) {
     return endsWithWav(path) || !basenameHasExtension(path);
 }
@@ -698,6 +755,10 @@ def main() -> None:
     text = BRIDGE_C.read_text(encoding="utf-8")
     text, require_changed = replace_once(text, OLD_REQUIRE, NEW_REQUIRE, "request-gate define")
     text, service_changed = replace_once(text, OLD_SERVICE_READ, NEW_SERVICE_READ, "service request check")
+    text, state_changed = replace_once(text, OLD_STATE_FLAGS, NEW_STATE_FLAGS, "accepted-time state")
+    text, time_changed = replace_once(text, OLD_TIME_ACCEPT, NEW_TIME_ACCEPT, "accepted-time latch")
+    text, init_changed = replace_once(text, OLD_INIT_FLAGS, NEW_INIT_FLAGS, "accepted-time init")
+    text, api_changed = replace_once(text, OLD_TIME_ACCEPT_API, NEW_TIME_ACCEPT_API, "accepted-time API")
     text, path_helper_changed = replace_once(text, OLD_PATH_MAY, NEW_PATH_MAY, "config path helper")
     text, path_require_changed = replace_once(text, OLD_PATH_REQUIRE, NEW_PATH_REQUIRE, "GET/DELETE config path guard")
     text, helper_changed = replace_once(text, OLD_ENSURE_FILESYSTEM, NEW_ENSURE_FILESYSTEM, "idle file-command helper")
@@ -717,6 +778,26 @@ def main() -> None:
         print("Applied ESP optional service-loop patch")
     else:
         print("ESP optional service-loop patch already applied")
+
+    if state_changed:
+        print("Applied ESP accepted-time state patch")
+    else:
+        print("ESP accepted-time state patch already applied")
+
+    if time_changed:
+        print("Applied ESP accepted-time latch patch")
+    else:
+        print("ESP accepted-time latch patch already applied")
+
+    if init_changed:
+        print("Applied ESP accepted-time init patch")
+    else:
+        print("ESP accepted-time init patch already applied")
+
+    if api_changed:
+        print("Applied ESP accepted-time API patch")
+    else:
+        print("ESP accepted-time API patch already applied")
 
     if path_helper_changed:
         print("Applied ESP config path helper patch")

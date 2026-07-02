@@ -1832,18 +1832,18 @@ int main(void) {
      */
 
     if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) &&
-        (AudioMoth_hasTimeBeenSet() == false || ESPBridge_isHardwareRequestActive())) {
+        ((AudioMoth_hasTimeBeenSet() == false && ESPBridge_hasAcceptedTime() == false) || ESPBridge_isHardwareRequestActive())) {
 
         uint32_t waitedMilliseconds = 0;
 
         ESPBridge_setBusy(false);
         ESPBridge_setUploadAllowed(false);
 
-        while ((AudioMoth_hasTimeBeenSet() == false || ESPBridge_isHardwareRequestActive()) && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {
+        while (((AudioMoth_hasTimeBeenSet() == false && ESPBridge_hasAcceptedTime() == false) || ESPBridge_isHardwareRequestActive()) && waitedMilliseconds < ESP_TIME_WAIT_TIMEOUT_MS) {
 
             AudioMoth_feedWatchdog();
 
-            if (AudioMoth_hasTimeBeenSet() == false || ESPBridge_isHardwareRequestActive()) {
+            if ((AudioMoth_hasTimeBeenSet() == false && ESPBridge_hasAcceptedTime() == false) || ESPBridge_isHardwareRequestActive()) {
 
                 uint32_t bridgeCurrentTime;
                 uint32_t bridgeCurrentMilliseconds;
@@ -1871,7 +1871,7 @@ int main(void) {
         ESPBridge_setUploadAllowed(false);
         ESPBridge_setBusy(true);
 
-        if (AudioMoth_hasTimeBeenSet() == false) {
+        if (AudioMoth_hasTimeBeenSet() == false && ESPBridge_hasAcceptedTime() == false) {
 
             SAVE_SWITCH_POSITION_AND_POWER_DOWN(DEFAULT_WAIT_INTERVAL);
 

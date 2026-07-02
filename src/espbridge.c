@@ -51,6 +51,7 @@ static volatile bool bridgeBusy = true;
 static volatile bool uploadAllowed = false;
 static bool filesystemEnabled = false;
 static bool serviceActive = false;
+static volatile bool espTimeAccepted = false;
 static uint32_t fastPayloadBaud = ESPBRIDGE_FAST_BAUD;
 static uint32_t softUartTicksPerBit = 0;
 static uint32_t softUartTicksPerMillisecond = 0;
@@ -949,6 +950,7 @@ static void commandTime(char *args) {
     }
     if (milliseconds > 999) milliseconds = 999;
     AudioMoth_setTime((uint32_t)seconds, (uint32_t)milliseconds);
+    espTimeAccepted = true;
     sendLine("OK TIME %lu %lu", seconds, milliseconds);
 }
 
@@ -1021,6 +1023,7 @@ void ESPBridge_init(void) {
     uploadAllowed = false;
     filesystemEnabled = false;
     serviceActive = false;
+    espTimeAccepted = false;
 }
 
 void ESPBridge_setBusy(bool busy) {
@@ -1042,6 +1045,10 @@ bool ESPBridge_isRequestActive(void) {
 
 bool ESPBridge_isHardwareRequestActive(void) {
     return rawRequestPinActive();
+}
+
+bool ESPBridge_hasAcceptedTime(void) {
+    return espTimeAccepted;
 }
 
 void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {

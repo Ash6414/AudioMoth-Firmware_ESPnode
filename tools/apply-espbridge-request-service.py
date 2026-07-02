@@ -85,6 +85,9 @@ NEW_BLOCK = r'''        /* ESP32 request service.
         }
 '''
 
+NEW_TIME_GATE_EXPR = "(AudioMoth_hasTimeBeenSet() == false && ESPBridge_hasAcceptedTime() == false)"
+OLD_TIME_GATE_EXPR = "AudioMoth_hasTimeBeenSet() == false"
+
 
 def apply_startup_patch(text: str) -> tuple[str, bool]:
     if STARTUP_BLOCK in text:
@@ -102,10 +105,20 @@ def apply_scheduler_patch(text: str) -> tuple[str, bool]:
     return text.replace(OLD_BLOCK, NEW_BLOCK), True
 
 
+def apply_time_gate_patch(text: str) -> tuple[str, int]:
+    if NEW_TIME_GATE_EXPR in text:
+        return text, 0
+    count = text.count(OLD_TIME_GATE_EXPR)
+    if count < 4:
+        raise SystemExit(f"Could not find ESP time gate expressions to patch: found {count}")
+    return text.replace(OLD_TIME_GATE_EXPR, NEW_TIME_GATE_EXPR, 4), 4
+
+
 def main() -> None:
     text = MAIN_C.read_text(encoding="utf-8")
     text, startup_changed = apply_startup_patch(text)
     text, scheduler_changed = apply_scheduler_patch(text)
+    text, time_gate_count = apply_time_gate_patch(text)
     MAIN_C.write_text(text, encoding="utf-8")
 
     if startup_changed:
@@ -117,6 +130,11 @@ def main() -> None:
         print("Applied ESP scheduler request service patch")
     else:
         print("ESP scheduler request service patch already applied")
+
+    if time_gate_count:
+        print(f"Applied ESP accepted-time gate patch to {time_gate_count} scheduler checks")
+    else:
+        print("ESP accepted-time gate patch already applied")
 
 
 if __name__ == "__main__":

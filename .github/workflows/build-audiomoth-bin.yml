@@ -89,6 +89,7 @@ jobs:
           grep -F '#define ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES 1024' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES 128' firmware/inc/espbridge.h
           grep -F '#define ESPBRIDGE_CHUNK_BYTES               2048' firmware/inc/espbridge.h
+          grep -F 'ESPBridge_hasAcceptedTime' firmware/inc/espbridge.h
           grep -F 'sendLine("OK BRIDGE_READY")' firmware/src/espbridge.c
           grep -F 'sendLine("OK PONG")' firmware/src/espbridge.c
           grep -F 'sendLine("OK FAST_READY")' firmware/src/espbridge.c
@@ -174,6 +175,7 @@ jobs:
           grep -n 'ESP32 startup request service' project/src/main.c
           grep -n 'ESP32 request service' project/src/main.c
           grep -n 'uploadServiceAllowed' project/src/main.c
+          grep -n 'ESPBridge_hasAcceptedTime' project/src/main.c
 
       - name: Apply optional ESP request gate patch
         shell: bash
@@ -183,6 +185,8 @@ jobs:
           python3 firmware/tools/apply-espbridge-sd-info.py
           grep -n '#define BRIDGE_REQUIRE_REQ_PIN              0' project/src/espbridge.c
           grep -n 'bool requestActive = ESPBridge_isRequestActive();' project/src/espbridge.c
+          grep -n 'espTimeAccepted = true' project/src/espbridge.c
+          grep -n 'ESPBridge_hasAcceptedTime' project/src/espbridge.c
           grep -n 'fileCommandsAllowed' project/src/espbridge.c
           grep -n 'rawFilesystemBegin' project/src/espbridge.c
           grep -n 'AudioMoth_restartSDCardClock' project/src/espbridge.c
@@ -284,6 +288,7 @@ jobs:
             echo "espbridge_sd_read_timing=header_milliseconds"
             echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
             echo "espbridge_request_service=hardware_uart1_115200_control_230400baud_acked_pipe_idle_file_service_default_or_custom_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
+            echo "espbridge_time_accept_latch=true"
             echo "espbridge_max_session_seconds=7200"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt
