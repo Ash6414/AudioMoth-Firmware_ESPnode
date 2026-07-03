@@ -5,6 +5,11 @@ The canonical Basic firmware scheduler only reaches the upload-service branch
 when a recording-safe window is already open. For the ESP bridge, the request
 pin itself must be enough to get a command service window; LIST/GET/DELETE
 remain gated by uploadAllowed.
+
+The patch also keeps schedule-less or newly flashed nodes recoverable: if the
+firmware is about to take the "not ready to make a recording" blink/sleep exit
+and ESP_REQ is asserted, it opens an upload-safe bridge service first so
+existing SD files can still be pulled.
 """
 
 from __future__ import annotations
@@ -88,6 +93,41 @@ NEW_BLOCK = r'''        /* ESP32 request service.
 NEW_TIME_GATE_EXPR = "(AudioMoth_hasTimeBeenSet() == false && ESPBridge_hasAcceptedTime() == false)"
 OLD_TIME_GATE_EXPR = "AudioMoth_hasTimeBeenSet() == false"
 
+OLD_NOT_READY_BLOCK = r'''    /* If not ready to make a recording then flash LED and power down */
+
+    if (getBackupFlag(BACKUP_READY_TO_MAKE_RECORDING) == false) {
+
+        FLASH_LED(Both, SHORT_LED_FLASH_DURATION)
+
+        SAVE_SWITCH_POSITION_AND_POWER_DOWN(DEFAULT_WAIT_INTERVAL);
+
+    }
+'''
+
+NEW_NOT_READY_BLOCK = r'''    /* If not ready to make a recording, still allow the ESP32 to pull files.
+     * This covers newly flashed or schedule-less nodes that have recordings on
+     * SD but are not configured for another recording yet. */
+
+    if (getBackupFlag(BACKUP_READY_TO_MAKE_RECORDING) == false) {
+
+        if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) &&
+            ESPBridge_isHardwareRequestActive()) {
+
+            ESPBridge_setBusy(false);
+            ESPBridge_setUploadAllowed(true);
+            ESPBridge_serviceUntil(UINT32_MAX - 1);
+            ESPBridge_setUploadAllowed(false);
+            ESPBridge_setBusy(true);
+
+        }
+
+        FLASH_LED(Both, SHORT_LED_FLASH_DURATION)
+
+        SAVE_SWITCH_POSITION_AND_POWER_DOWN(DEFAULT_WAIT_INTERVAL);
+
+    }
+'''
+
 
 def apply_startup_patch(text: str) -> tuple[str, bool]:
     if STARTUP_BLOCK in text:
@@ -114,11 +154,20 @@ def apply_time_gate_patch(text: str) -> tuple[str, int]:
     return text.replace(OLD_TIME_GATE_EXPR, NEW_TIME_GATE_EXPR, 4), 4
 
 
+def apply_not_ready_upload_patch(text: str) -> tuple[str, bool]:
+    if NEW_NOT_READY_BLOCK in text:
+        return text, False
+    if OLD_NOT_READY_BLOCK not in text:
+        raise SystemExit("Could not find not-ready blink/sleep block to patch")
+    return text.replace(OLD_NOT_READY_BLOCK, NEW_NOT_READY_BLOCK, 1), True
+
+
 def main() -> None:
     text = MAIN_C.read_text(encoding="utf-8")
     text, startup_changed = apply_startup_patch(text)
     text, scheduler_changed = apply_scheduler_patch(text)
     text, time_gate_count = apply_time_gate_patch(text)
+    text, not_ready_changed = apply_not_ready_upload_patch(text)
     MAIN_C.write_text(text, encoding="utf-8")
 
     if startup_changed:
@@ -135,6 +184,11 @@ def main() -> None:
         print(f"Applied ESP accepted-time gate patch to {time_gate_count} scheduler checks")
     else:
         print("ESP accepted-time gate patch already applied")
+
+    if not_ready_changed:
+        print("Applied ESP not-ready upload service patch")
+    else:
+        print("ESP not-ready upload service patch already applied")
 
 
 if __name__ == "__main__":
