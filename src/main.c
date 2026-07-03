@@ -1698,6 +1698,21 @@ int main(void) {
 
     AM_switchPosition_t switchPosition = AudioMoth_getSwitchPosition();
 
+    /* ESP32 startup request service.
+     *
+     * If the ESP32 is already asserting the physical ESP_REQ pin when bridge firmware starts,
+     * open one long upload-capable UART session immediately. This avoids a fragile
+     * two-window handoff on freshly flashed or schedule-less nodes. */
+    if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) && ESPBridge_isHardwareRequestActive()) {
+
+        ESPBridge_setBusy(false);
+        ESPBridge_setUploadAllowed(true);
+        ESPBridge_serviceUntil(UINT32_MAX - 1);
+        ESPBridge_setUploadAllowed(false);
+        ESPBridge_setBusy(true);
+
+    }
+
     if (AudioMoth_isInitialPowerUp()) {
         
         /* Initialise recording schedule variables */
@@ -2117,9 +2132,22 @@ int main(void) {
 
     }
     
-    /* If not ready to make a recording then flash LED and power down */
+    /* If not ready to make a recording, still allow the ESP32 to pull files.
+     * This covers newly flashed or schedule-less nodes that have recordings on
+     * SD but are not configured for another recording yet. */
 
     if (getBackupFlag(BACKUP_READY_TO_MAKE_RECORDING) == false) {
+
+        if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) &&
+            ESPBridge_isHardwareRequestActive()) {
+
+            ESPBridge_setBusy(false);
+            ESPBridge_setUploadAllowed(true);
+            ESPBridge_serviceUntil(UINT32_MAX - 1);
+            ESPBridge_setUploadAllowed(false);
+            ESPBridge_setBusy(true);
+
+        }
 
         FLASH_LED(Both, SHORT_LED_FLASH_DURATION)
 

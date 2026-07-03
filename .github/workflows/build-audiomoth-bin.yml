@@ -251,6 +251,7 @@ jobs:
           strings project/build/audiomoth.bin | grep -F 'TESTSTREAM'
           strings project/build/audiomoth.bin | grep -F 'OK TESTSTREAM'
           strings project/build/audiomoth.bin | grep -F 'SD total_kb='
+          strings project/build/audiomoth.bin | grep -F 'INFO SKIP_PATH_TOO_LONG'
           strings project/build/audiomoth.bin | grep -F 'proto=%u stream=%u stream_baud=%lu stream_bytes=%lu pipe=%u pipe_baud=%lu pipe_bytes=%lu pipe_frame=%u pipe_ack=1'
 
           mkdir -p firmware-artifacts
@@ -291,13 +292,15 @@ jobs:
             echo "espbridge_test_stream_bytes=1048576"
             echo "espbridge_sd_read_timing=header_milliseconds"
             echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
-            echo "espbridge_request_service=hardware_uart1_115200_control_115200baud_acked_pipe_idle_file_service_default_or_custom_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
-            echo "service_window_fix=raw_pa7_time_sync_upload_scheduler_split_esp_time_accept_latch"
+            echo "espbridge_request_service=hardware_uart1_115200_control_115200baud_acked_pipe_boot_or_idle_file_service_default_or_custom_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
+            echo "service_window_fix=startup_request_is_upload_capable_no_second_window_handoff_required"
+            echo "startup_upload_service=true"
             echo "not_ready_upload_service=true"
             echo "not_ready_upload_service_reason=scheduleless_or_newly_flashed_nodes_can_upload_existing_sd_files"
             echo "espbridge_time_accept_latch=true"
             echo "espbridge_startup_request_service=true"
             echo "espbridge_max_session_seconds=7200"
+            echo "espbridge_path_too_long_skip=true"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt
 

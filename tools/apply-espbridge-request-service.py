@@ -7,9 +7,8 @@ pin itself must be enough to get a command service window; LIST/GET/DELETE
 remain gated by uploadAllowed.
 
 The patch also keeps schedule-less or newly flashed nodes recoverable: if the
-firmware is about to take the "not ready to make a recording" blink/sleep exit
-and ESP_REQ is asserted, it opens an upload-safe bridge service first so
-existing SD files can still be pulled.
+ESP32 asserts ESP_REQ at boot, AudioMoth opens one long upload-safe service
+immediately instead of requiring a fragile handoff into a later scheduler window.
 """
 
 from __future__ import annotations
@@ -25,12 +24,12 @@ STARTUP_BLOCK = r'''
     /* ESP32 startup request service.
      *
      * If the ESP32 is already asserting the physical ESP_REQ pin when bridge firmware starts,
-     * answer UART immediately before normal configuration/scheduler handling.
-     * File upload remains disabled in this early window. */
+     * open one long upload-capable UART session immediately. This avoids a fragile
+     * two-window handoff on freshly flashed or schedule-less nodes. */
     if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) && ESPBridge_isHardwareRequestActive()) {
 
         ESPBridge_setBusy(false);
-        ESPBridge_setUploadAllowed(false);
+        ESPBridge_setUploadAllowed(true);
         ESPBridge_serviceUntil(UINT32_MAX - 1);
         ESPBridge_setUploadAllowed(false);
         ESPBridge_setBusy(true);

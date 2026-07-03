@@ -275,23 +275,20 @@ static void sendFastTrainingPreamble(void) {
     }
 }
 
-static bool endsWithWav(const char *path) {
-    const char *dot = strrchr(path, '.');
-    if (dot == NULL) return false;
-    return (dot[1] == 'W' || dot[1] == 'w') &&
-           (dot[2] == 'A' || dot[2] == 'a') &&
-           (dot[3] == 'V' || dot[3] == 'v') &&
-           dot[4] == 0;
+static bool charEqualsIgnoreCase(char a, char b) {
+    return tolower((unsigned char)a) == tolower((unsigned char)b);
 }
 
-static bool basenameHasExtension(const char *path) {
+static bool isConfigTxtPath(const char *path) {
     const char *slash = strrchr(path, '/');
     const char *name = slash == NULL ? path : slash + 1;
-    return strchr(name, '.') != NULL;
-}
+    const char *config = "config.txt";
 
-static bool pathMayBeAudioFile(const char *path) {
-    return endsWithWav(path) || !basenameHasExtension(path);
+    for (uint32_t i = 0; config[i] != 0; i += 1) {
+        if (name[i] == 0 || !charEqualsIgnoreCase(name[i], config[i])) return false;
+    }
+
+    return name[10] == 0;
 }
 
 static bool validPath(const char *path, bool requireWav) {
@@ -306,7 +303,7 @@ static bool validPath(const char *path, bool requireWav) {
         if (!ok) return false;
     }
 
-    if (requireWav && !pathMayBeAudioFile(path)) return false;
+    if (requireWav && isConfigTxtPath(path)) return false;
     return true;
 }
 
@@ -314,6 +311,18 @@ static bool ensureFilesystem(void) {
     if (filesystemEnabled) return true;
     filesystemEnabled = AudioMoth_enableFileSystem(AM_SD_CARD_NORMAL_SPEED);
     return filesystemEnabled;
+}
+
+static bool fileCommandsAllowed(void) {
+    return !bridgeBusy && uploadAllowed && serviceActive;
+}
+
+static void rawFilesystemBegin(void) {
+    AudioMoth_restartSDCardClock();
+}
+
+static void rawFilesystemEnd(void) {
+    AudioMoth_pauseSDCardClock();
 }
 
 static bool deadlineReached(uint32_t deadlineUnixSeconds) {
@@ -345,69 +354,110 @@ static uint32_t elapsedServiceMilliseconds(uint32_t startSeconds, uint32_t start
 
 /* ---------------- File operations ---------------- */
 
-static bool fileLooksLikeWav(const char *path) {
-    if (endsWithWav(path)) return true;
-    if (basenameHasExtension(path)) return false;
+#define LIST_MAX_DEPTH 4
+#define LIST_SKIP_ATTRS 0x06
 
-    FIL file;
-    FRESULT res = f_open(&file, path, FA_READ);
-    if (res != FR_OK) return false;
-
-    uint8_t header[12];
-    UINT bytesRead = 0;
-    res = f_read(&file, header, sizeof(header), &bytesRead);
-    f_close(&file);
-
-    if (res != FR_OK || bytesRead != sizeof(header)) return false;
-
-    return header[0] == 'R' && header[1] == 'I' && header[2] == 'F' && header[3] == 'F' &&
-           header[8] == 'W' && header[9] == 'A' && header[10] == 'V' && header[11] == 'E';
+static bool isDotDirectory(const char *name) {
+    return strcmp(name, ".") == 0 || strcmp(name, "..") == 0;
 }
 
-static void listOneDirectory(const char *prefix) {
+static bool buildChildPath(char *out, uint32_t outSize, const char *prefix, const char *name) {
+    int written = prefix[0]
+        ? snprintf(out, outSize, "%s/%s", prefix, name)
+        : snprintf(out, outSize, "%s", name);
+    return written > 0 && (uint32_t)written < outSize;
+}
+
+static bool isBridgeSafePath(const char *path) {
+    return validPath(path, false);
+}
+
+static uint32_t clampUint64ToUint32(uint64_t value) {
+    return value > 0xFFFFFFFFULL ? 0xFFFFFFFFUL : (uint32_t)value;
+}
+
+static void sendSdInfo(void) {
+    FATFS *fs = NULL;
+    DWORD freeClusters = 0;
+
+    FRESULT res = f_getfree("", &freeClusters, &fs);
+    if (res != FR_OK || fs == NULL) {
+        sendLine("INFO SD_FREE %u", (unsigned int)res);
+        return;
+    }
+
+    uint64_t totalClusters = fs->n_fatent > 2U ? (uint64_t)(fs->n_fatent - 2U) : 0ULL;
+    uint64_t totalKb = (totalClusters * (uint64_t)fs->csize * 512ULL) / 1024ULL;
+    uint64_t freeKb = ((uint64_t)freeClusters * (uint64_t)fs->csize * 512ULL) / 1024ULL;
+
+    sendLine("SD total_kb=%lu free_kb=%lu",
+             (unsigned long)clampUint64ToUint32(totalKb),
+             (unsigned long)clampUint64ToUint32(freeKb));
+}
+
+static void listDirectoryRecursive(const char *prefix, uint32_t depth) {
     DIR dir;
     FILINFO fno;
 
     FRESULT res = f_opendir(&dir, prefix[0] ? prefix : "");
-    if (res != FR_OK) return;
+    if (res != FR_OK) {
+        sendLine("INFO OPENDIR %s %u", prefix[0] ? prefix : "/", (unsigned int)res);
+        return;
+    }
 
     while (true) {
         WDOG_Feed();
         res = f_readdir(&dir, &fno);
-        if (res != FR_OK || fno.fname[0] == 0) break;
+        if (res != FR_OK) {
+            sendLine("INFO READDIR %s %u", prefix[0] ? prefix : "/", (unsigned int)res);
+            break;
+        }
+        if (fno.fname[0] == 0) break;
+        if (isDotDirectory(fno.fname)) continue;
+
+        char full[ESPBRIDGE_MAX_PATH];
+        if (!buildChildPath(full, sizeof(full), prefix, fno.fname)) {
+            sendLine("INFO SKIP_PATH_TOO_LONG %s", fno.fname);
+            continue;
+        }
+
+        if (fno.fattrib & LIST_SKIP_ATTRS) {
+            sendLine("INFO SKIP_ATTR %s %u", full, (unsigned int)fno.fattrib);
+            continue;
+        }
+
+        if (!isBridgeSafePath(full)) {
+            sendLine("INFO SKIP_PATH %s", full);
+            continue;
+        }
+
+        sendLine("INFO ENTRY %s %lu %u", full, (unsigned long)fno.fsize, (unsigned int)fno.fattrib);
 
         if (fno.fattrib & AM_DIR) {
-            /* Support one level of AudioMoth daily folders, e.g. 20260531/file.WAV. */
-            char nested[ESPBRIDGE_MAX_PATH];
-            if (prefix[0]) continue;
-            snprintf(nested, sizeof(nested), "%s", fno.fname);
-
-            DIR subdir;
-            FILINFO subfno;
-            if (f_opendir(&subdir, nested) == FR_OK) {
-                while (true) {
-                    FRESULT subres = f_readdir(&subdir, &subfno);
-                    if (subres != FR_OK || subfno.fname[0] == 0) break;
-                    if ((subfno.fattrib & AM_DIR) == 0) {
-                        char full[ESPBRIDGE_MAX_PATH];
-                        snprintf(full, sizeof(full), "%s/%s", nested, subfno.fname);
-                        if (fileLooksLikeWav(full)) {
-                            sendLine("FILE %s %lu", full, (unsigned long)subfno.fsize);
-                        }
-                    }
-                }
-                f_closedir(&subdir);
+            if (depth < LIST_MAX_DEPTH) {
+                listDirectoryRecursive(full, depth + 1);
+            } else {
+                sendLine("INFO SKIP_DEPTH %s", full);
             }
-        } else if (fileLooksLikeWav(fno.fname)) {
-            sendLine("FILE %s %lu", fno.fname, (unsigned long)fno.fsize);
+        } else if (!isConfigTxtPath(full)) {
+            sendLine("FILE %s %lu", full, (unsigned long)fno.fsize);
+        } else {
+            sendLine("INFO SKIP_CONFIG %s", full);
         }
     }
 
     f_closedir(&dir);
 }
 
+static void listOneDirectory(const char *prefix) {
+    rawFilesystemBegin();
+    sendSdInfo();
+    listDirectoryRecursive(prefix, 0);
+    rawFilesystemEnd();
+}
+
 static void commandList(void) {
-    if (bridgeBusy || !uploadAllowed) {
+    if (!fileCommandsAllowed()) {
         sendLine("ERR BUSY upload_not_allowed");
         return;
     }
@@ -444,7 +494,7 @@ static void commandGet(char *args, bool fastPayload) {
     unsigned long offset = 0;
     unsigned long requested = ESPBRIDGE_CHUNK_BYTES;
 
-    if (bridgeBusy || !uploadAllowed) {
+    if (!fileCommandsAllowed()) {
         sendLine("ERR BUSY upload_not_allowed");
         return;
     }
@@ -462,9 +512,12 @@ static void commandGet(char *args, bool fastPayload) {
         return;
     }
 
+    rawFilesystemBegin();
+
     FIL file;
     FRESULT res = f_open(&file, path, FA_READ);
     if (res != FR_OK) {
+        rawFilesystemEnd();
         sendLine("ERR OPEN %u", (unsigned int)res);
         return;
     }
@@ -472,6 +525,7 @@ static void commandGet(char *args, bool fastPayload) {
     FSIZE_t size = f_size(&file);
     if ((FSIZE_t)offset > size) {
         f_close(&file);
+        rawFilesystemEnd();
         sendLine("ERR RANGE offset_past_eof");
         return;
     }
@@ -479,6 +533,7 @@ static void commandGet(char *args, bool fastPayload) {
     res = f_lseek(&file, (FSIZE_t)offset);
     if (res != FR_OK) {
         f_close(&file);
+        rawFilesystemEnd();
         sendLine("ERR SEEK %u", (unsigned int)res);
         return;
     }
@@ -488,10 +543,15 @@ static void commandGet(char *args, bool fastPayload) {
     AudioMoth_getTime(&readStartSeconds, &readStartMilliseconds);
     res = f_read(&file, chunkBuffer, (UINT)requested, &bytesRead);
     uint32_t sdReadMilliseconds = elapsedServiceMilliseconds(readStartSeconds, readStartMilliseconds);
-    f_close(&file);
+    FRESULT closeRes = f_close(&file);
+    rawFilesystemEnd();
 
     if (res != FR_OK) {
         sendLine("ERR READ %u", (unsigned int)res);
+        return;
+    }
+    if (closeRes != FR_OK) {
+        sendLine("ERR CLOSE %u", (unsigned int)closeRes);
         return;
     }
 
@@ -529,7 +589,7 @@ static void commandGetStream(char *args) {
     unsigned long requested = ESPBRIDGE_STREAM_BYTES;
     unsigned long baud = ESPBRIDGE_FAST_BAUD;
 
-    if (bridgeBusy || !uploadAllowed) {
+    if (!fileCommandsAllowed()) {
         sendLine("ERR BUSY upload_not_allowed");
         return;
     }
@@ -551,9 +611,12 @@ static void commandGetStream(char *args) {
         return;
     }
 
+    rawFilesystemBegin();
+
     FIL file;
     FRESULT res = f_open(&file, path, FA_READ);
     if (res != FR_OK) {
+        rawFilesystemEnd();
         sendLine("ERR OPEN %u", (unsigned int)res);
         return;
     }
@@ -561,6 +624,7 @@ static void commandGetStream(char *args) {
     FSIZE_t size = f_size(&file);
     if ((FSIZE_t)offset > size) {
         f_close(&file);
+        rawFilesystemEnd();
         sendLine("ERR RANGE offset_past_eof");
         return;
     }
@@ -571,6 +635,7 @@ static void commandGetStream(char *args) {
     res = f_lseek(&file, (FSIZE_t)offset);
     if (res != FR_OK) {
         f_close(&file);
+        rawFilesystemEnd();
         sendLine("ERR SEEK %u", (unsigned int)res);
         return;
     }
@@ -621,7 +686,8 @@ static void commandGetStream(char *args) {
         sent += bytesRead;
     }
 
-    f_close(&file);
+    FRESULT closeRes = f_close(&file);
+    rawFilesystemEnd();
     if (baud != ESPBRIDGE_DEFAULT_BAUD) {
         bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
         bridgeDelayMilliseconds(5);
@@ -629,6 +695,10 @@ static void commandGetStream(char *args) {
 
     if (readError || sent != totalBytes) {
         sendLine("ERR STREAM read_failed %lu %lu", (unsigned long)sent, (unsigned long)totalBytes);
+        return;
+    }
+    if (closeRes != FR_OK) {
+        sendLine("ERR CLOSE %u", (unsigned int)closeRes);
         return;
     }
 
@@ -639,13 +709,12 @@ static void commandGetStream(char *args) {
 }
 
 static bool pipeAckAccepted(uint32_t frameOffset, uint16_t frameLength) {
-    unsigned long ackOffset = 0;
-    unsigned long ackLength = 0;
-
     if (!readLine(ESPBRIDGE_PIPE_ACK_TIMEOUT_MS)) return false;
 
+    unsigned long ackOffset = 0;
+    unsigned long ackLength = 0;
     if (sscanf(lineBuffer, "ACK %lu %lu", &ackOffset, &ackLength) == 2) {
-        return ackOffset == (unsigned long)frameOffset && ackLength == (unsigned long)frameLength;
+        return ackOffset == frameOffset && ackLength == frameLength;
     }
 
     if (strncmp(lineBuffer, "NAK ", 4) == 0) return false;
@@ -679,7 +748,7 @@ static void commandGetPipe(char *args) {
     unsigned long requested = 0;
     unsigned long baud = ESPBRIDGE_PIPE_BAUD;
 
-    if (bridgeBusy || !uploadAllowed) {
+    if (!fileCommandsAllowed()) {
         sendLine("ERR BUSY upload_not_allowed");
         return;
     }
@@ -700,9 +769,12 @@ static void commandGetPipe(char *args) {
         return;
     }
 
+    rawFilesystemBegin();
+
     FIL file;
     FRESULT res = f_open(&file, path, FA_READ);
     if (res != FR_OK) {
+        rawFilesystemEnd();
         sendLine("ERR OPEN %u", (unsigned int)res);
         return;
     }
@@ -710,6 +782,7 @@ static void commandGetPipe(char *args) {
     FSIZE_t size = f_size(&file);
     if ((FSIZE_t)offset > size) {
         f_close(&file);
+        rawFilesystemEnd();
         sendLine("ERR RANGE offset_past_eof");
         return;
     }
@@ -720,6 +793,7 @@ static void commandGetPipe(char *args) {
     res = f_lseek(&file, (FSIZE_t)offset);
     if (res != FR_OK) {
         f_close(&file);
+        rawFilesystemEnd();
         sendLine("ERR SEEK %u", (unsigned int)res);
         return;
     }
@@ -734,6 +808,7 @@ static void commandGetPipe(char *args) {
 
     if (totalBytes == 0) {
         f_close(&file);
+        rawFilesystemEnd();
         sendLine("OK PIPEDONE %s %lu 0", path, offset);
         return;
     }
@@ -786,6 +861,7 @@ static void commandGetPipe(char *args) {
                     bridgeDelayMilliseconds(5);
                 }
                 f_close(&file);
+                rawFilesystemEnd();
                 sendLine("ERR PIPE ack_failed %lu %u", (unsigned long)frameOffset, (unsigned int)bytesRead);
                 return;
             }
@@ -800,6 +876,7 @@ static void commandGetPipe(char *args) {
 
         if (readError || blockSent != blockTarget) {
             f_close(&file);
+            rawFilesystemEnd();
             sendLine("ERR PIPE read_failed %lu %lu",
                      (unsigned long)(sentTotal + blockSent),
                      (unsigned long)totalBytes);
@@ -813,6 +890,7 @@ static void commandGetPipe(char *args) {
 
         if (!readLine(ESPBRIDGE_PIPE_NEXT_TIMEOUT_MS)) {
             f_close(&file);
+            rawFilesystemEnd();
             sendLine("ERR PIPE next_timeout %lu %lu",
                      (unsigned long)sentTotal,
                      (unsigned long)totalBytes);
@@ -821,6 +899,7 @@ static void commandGetPipe(char *args) {
 
         if (strcmp(lineBuffer, "STOP") == 0) {
             f_close(&file);
+            rawFilesystemEnd();
             sendLine("OK PIPESTOP %s %lu %lu", path, offset, (unsigned long)sentTotal);
             return;
         }
@@ -830,12 +909,14 @@ static void commandGetPipe(char *args) {
             (sscanf(lineBuffer, "NEXT %lu", &nextOffset) != 1 ||
              nextOffset != (unsigned long)((uint32_t)offset + sentTotal))) {
             f_close(&file);
+            rawFilesystemEnd();
             sendLine("ERR PIPE expected_NEXT");
             return;
         }
     }
 
     FRESULT closeRes = f_close(&file);
+    rawFilesystemEnd();
     if (closeRes != FR_OK) {
         sendLine("ERR CLOSE %u", (unsigned int)closeRes);
         return;
@@ -905,7 +986,7 @@ static void commandTestStream(char *args) {
 static void commandDelete(char *args) {
     char path[ESPBRIDGE_MAX_PATH];
 
-    if (bridgeBusy || !uploadAllowed) {
+    if (!fileCommandsAllowed()) {
         sendLine("ERR BUSY upload_not_allowed");
         return;
     }
@@ -923,7 +1004,10 @@ static void commandDelete(char *args) {
         return;
     }
 
+    rawFilesystemBegin();
     FRESULT res = f_unlink(path);
+    rawFilesystemEnd();
+
     if (res == FR_OK) sendLine("OK DELETE %s", path);
     else sendLine("ERR DELETE %u", (unsigned int)res);
 }
@@ -965,7 +1049,7 @@ static void commandStatus(uint32_t deadlineUnixSeconds) {
     AudioMoth_getTime(&now, &ms);
     sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu proto=%u stream=%u stream_baud=%lu stream_bytes=%lu pipe=%u pipe_baud=%lu pipe_bytes=%lu pipe_frame=%u pipe_ack=1",
              bridgeBusy ? 1 : 0,
-             uploadAllowed ? 1 : 0,
+             fileCommandsAllowed() ? 1 : 0,
              ESPBridge_isRequestActive() ? 1 : 0,
              rawRequestPinActive() ? 1 : 0,
              (unsigned long)now,

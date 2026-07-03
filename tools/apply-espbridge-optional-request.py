@@ -155,9 +155,11 @@ static bool isDotDirectory(const char *name) {
     return strcmp(name, ".") == 0 || strcmp(name, "..") == 0;
 }
 
-static void buildChildPath(char *out, uint32_t outSize, const char *prefix, const char *name) {
-    if (prefix[0]) snprintf(out, outSize, "%s/%s", prefix, name);
-    else snprintf(out, outSize, "%s", name);
+static bool buildChildPath(char *out, uint32_t outSize, const char *prefix, const char *name) {
+    int written = prefix[0]
+        ? snprintf(out, outSize, "%s/%s", prefix, name)
+        : snprintf(out, outSize, "%s", name);
+    return written > 0 && (uint32_t)written < outSize;
 }
 
 static bool isBridgeSafePath(const char *path) {
@@ -185,7 +187,10 @@ static void listDirectoryRecursive(const char *prefix, uint32_t depth) {
         if (isDotDirectory(fno.fname)) continue;
 
         char full[ESPBRIDGE_MAX_PATH];
-        buildChildPath(full, sizeof(full), prefix, fno.fname);
+        if (!buildChildPath(full, sizeof(full), prefix, fno.fname)) {
+            sendLine("INFO SKIP_PATH_TOO_LONG %s", fno.fname);
+            continue;
+        }
 
         if (fno.fattrib & LIST_SKIP_ATTRS) {
             sendLine("INFO SKIP_ATTR %s %u", full, (unsigned int)fno.fattrib);
@@ -753,6 +758,8 @@ NEW_COMMAND_DELETE = r'''static void commandDelete(char *args) {
 
 def replace_once(text: str, old: str, new: str, label: str) -> tuple[str, bool]:
     if new in text:
+        return text, False
+    if label == "config path helper" and "static bool isConfigTxtPath" in text:
         return text, False
     if old not in text:
         raise SystemExit(f"Could not find ESP bridge {label} text to patch")
