@@ -49,7 +49,8 @@ streams repeated 115200-baud payload blocks. Each block is split into framed
 ACKs each good frame and NAKs bad frames so AudioMoth can resend before moving
 on. AudioMoth waits inside the same command for `NEXT <offset>` after each
 64 KiB block, so the ESP only advances after the server accepts the previous
-block. `GET` remains as the compatibility fallback.
+block. `GET` remains available as a compatibility command, but the matching
+production ESP32 upload path uses the ACKed `GETPIPE` pipe.
 
 For no-SD-card throughput diagnostics, the matching ESP can issue
 `TESTSTREAM <bytes> <baud>`. AudioMoth sends the same framed format as
