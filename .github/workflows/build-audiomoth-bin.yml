@@ -268,6 +268,7 @@ jobs:
             echo "audiomoth_project_sha=$(git -C project rev-parse HEAD)"
             echo "firmware_description=AudioMoth-Firmware-Basic"
             echo "firmware_version=1.12.0"
+            echo "stability_profile=slow_smooth_115200_acked_pipe"
             echo "espbridge_control_baud=115200"
             echo "espbridge_protocol_version=4"
             echo "espbridge_fast_baud=921600"
@@ -276,7 +277,7 @@ jobs:
             echo "espbridge_slow_payload_training_bytes=128"
             echo "espbridge_chunk_bytes=2048"
             echo "espbridge_stream_bytes=65536"
-            echo "espbridge_stream_fast_baud=921600"
+            echo "espbridge_stream_fast_baud=921600_diagnostic_only"
             echo "espbridge_stream_control_baud_supported=true"
             echo "espbridge_production_stream_baud=115200"
             echo "espbridge_pipe_stream_supported=true"
@@ -295,6 +296,7 @@ jobs:
             echo "not_ready_upload_service=true"
             echo "not_ready_upload_service_reason=scheduleless_or_newly_flashed_nodes_can_upload_existing_sd_files"
             echo "espbridge_time_accept_latch=true"
+            echo "espbridge_startup_request_service=true"
             echo "espbridge_max_session_seconds=7200"
             date -u '+built_at_utc=%Y-%m-%dT%H:%M:%SZ'
           } > firmware-artifacts/build-info.txt
