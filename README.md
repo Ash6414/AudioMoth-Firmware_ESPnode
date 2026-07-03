@@ -32,6 +32,9 @@ compatibility is intentionally being removed.
 - `PING`, `STATUS`, `TIME`, `FASTCAP`, and `DONE` work in the bridge window
 - `LIST`, `GET`, `GETFAST`, `GETSTREAM`, `GETPIPE`, and `DELETE` work while
   bridge service is active and the scheduler has marked file upload safe
+- Newly flashed or schedule-less nodes still open a safe file-upload bridge
+  when ESP_REQ is asserted, so existing SD files can be recovered before the
+  next recording schedule is configured
 - `TESTSTREAM` sends a deterministic 1 MiB max framed stream without touching SD, for UART speed checks
 - `LIST` recursively walks SD card folders up to 4 levels deep
 - `LIST` includes any regular SD file except `CONFIG.TXT` / `config.txt`
