@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Patch AudioMoth main.c so ESP_REQ always gets a UART command window.
+"""Patch AudioMoth main.c so the ESP32 gets a guarded UART command window.
 
 The canonical Basic firmware scheduler only reaches the upload-service branch
 when a recording-safe window is already open. For the ESP bridge, the request
 pin itself must be enough to get a command service window; LIST/GET/DELETE
 remain gated by uploadAllowed.
 
-The patch also keeps schedule-less or newly flashed nodes recoverable: if the
-ESP32 asserts ESP_REQ at boot, AudioMoth opens one long upload-safe service
-immediately instead of requiring a fragile handoff into a later scheduler window.
+The patch also keeps schedule-less or newly flashed nodes recoverable:
+AudioMoth opens a guarded upload-safe service immediately in CUSTOM/DEFAULT
+instead of requiring a fragile handoff into a later scheduler window. The
+bridge service itself idles out when no ESP_REQ or UART traffic is present.
 """
 
 from __future__ import annotations
@@ -21,12 +22,13 @@ STARTUP_ANCHOR = r'''    AM_switchPosition_t switchPosition = AudioMoth_getSwitc
 '''
 
 STARTUP_BLOCK = r'''
-    /* ESP32 startup request service.
+    /* ESP32 startup upload service.
      *
-     * If the ESP32 is already asserting the physical ESP_REQ pin when bridge firmware starts,
-     * open one long upload-capable UART session immediately. This avoids a fragile
-     * two-window handoff on freshly flashed or schedule-less nodes. */
-    if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) && ESPBridge_isHardwareRequestActive()) {
+     * Open a guarded upload-capable UART window immediately whenever firmware starts
+     * in CUSTOM or DEFAULT. The bridge itself idles out if no ESP request or UART
+     * traffic is present, which removes the reset-order race without leaving an
+     * unclaimed AudioMoth awake forever. */
+    if (switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) {
 
         ESPBridge_setBusy(false);
         ESPBridge_setUploadAllowed(true);
@@ -170,9 +172,9 @@ def main() -> None:
     MAIN_C.write_text(text, encoding="utf-8")
 
     if startup_changed:
-        print("Applied ESP startup request service patch")
+        print("Applied ESP guarded startup service patch")
     else:
-        print("ESP startup request service patch already applied")
+        print("ESP guarded startup service patch already applied")
 
     if scheduler_changed:
         print("Applied ESP scheduler request service patch")

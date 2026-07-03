@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Patch AudioMoth ESP bridge for robust ESP32 service sessions.
 
-The ESP32 still drives ESP_REQ, but this build must also keep the UART service
-alive when PA7 is not being sampled correctly. For the transfer prototype, file
-commands are allowed whenever the AudioMoth bridge service is active, the
-firmware is not busy recording, and the scheduler has marked uploads safe.
+The ESP32 still drives ESP_REQ. The bridge also emits ready beacons during the
+short idle grace window, so a reset-order mismatch can recover without keeping
+the AudioMoth awake forever. File commands are allowed whenever the AudioMoth
+bridge service is active, the firmware is not busy recording, and the scheduler
+has marked uploads safe.
 LIST walks a few folder levels, emits INFO ENTRY lines for
 visible protocol-safe entries, skips CONFIG.TXT, and skips hidden/system or
 path-unsafe SD entries such as Windows' System Volume Information. Raw FatFs
@@ -18,8 +19,8 @@ from pathlib import Path
 
 BRIDGE_C = Path("project/src/espbridge.c")
 
-OLD_REQUIRE = "#define BRIDGE_REQUIRE_REQ_PIN              1"
-NEW_REQUIRE = "#define BRIDGE_REQUIRE_REQ_PIN              0"
+REQ_PIN_ENABLED = "#define BRIDGE_REQUIRE_REQ_PIN              1"
+REQ_PIN_DISABLED = "#define BRIDGE_REQUIRE_REQ_PIN              0"
 
 OLD_SERVICE_READ = "        bool requestActive = rawRequestPinActive();"
 NEW_SERVICE_READ = "        bool requestActive = ESPBridge_isRequestActive();"
@@ -802,7 +803,13 @@ def replace_function(text: str, start: str, end: str, new: str, label: str, mark
 
 def main() -> None:
     text = BRIDGE_C.read_text(encoding="utf-8")
-    text, require_changed = replace_once(text, OLD_REQUIRE, NEW_REQUIRE, "request-gate define")
+    if REQ_PIN_ENABLED in text:
+        require_changed = False
+    elif REQ_PIN_DISABLED in text:
+        text = text.replace(REQ_PIN_DISABLED, REQ_PIN_ENABLED, 1)
+        require_changed = True
+    else:
+        raise SystemExit("Could not find ESP bridge request-gate define to patch")
     text, service_changed = replace_once(text, OLD_SERVICE_READ, NEW_SERVICE_READ, "service request check")
     text, state_changed = replace_once(text, OLD_STATE_FLAGS, NEW_STATE_FLAGS, "accepted-time state")
     text, time_changed = replace_once(text, OLD_TIME_ACCEPT, NEW_TIME_ACCEPT, "accepted-time latch")
@@ -819,9 +826,9 @@ def main() -> None:
     BRIDGE_C.write_text(text, encoding="utf-8")
 
     if require_changed:
-        print("Applied ESP optional request-gate patch")
+        print("Applied ESP request-pin gate restore patch")
     else:
-        print("ESP optional request-gate patch already applied")
+        print("ESP request-pin gate already enabled")
 
     if service_changed:
         print("Applied ESP optional service-loop patch")

@@ -39,7 +39,7 @@
 #define BRIDGE_REQ_PORT                     gpioPortA    /* a7, ESP output to AudioMoth */
 #define BRIDGE_REQ_PIN                      7
 
-#define BRIDGE_REQUIRE_REQ_PIN              0
+#define BRIDGE_REQUIRE_REQ_PIN              1
 
 #define RX_LINE_TIMEOUT_MS                  250
 #define SERVICE_IDLE_TIMEOUT_MS             30000
@@ -1167,6 +1167,11 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
             if (idleMs >= SERVICE_IDLE_TIMEOUT_MS) break;
             bridgeDelayMilliseconds(10);
             idleMs += 10;
+            readyBeaconMs += 10;
+            if (readyBeaconMs >= SERVICE_READY_BEACON_MS) {
+                sendLine("OK BRIDGE_READY");
+                readyBeaconMs = 0;
+            }
             continue;
         }
 

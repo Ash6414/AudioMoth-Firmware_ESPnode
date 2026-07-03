@@ -1698,12 +1698,13 @@ int main(void) {
 
     AM_switchPosition_t switchPosition = AudioMoth_getSwitchPosition();
 
-    /* ESP32 startup request service.
+    /* ESP32 startup upload service.
      *
-     * If the ESP32 is already asserting the physical ESP_REQ pin when bridge firmware starts,
-     * open one long upload-capable UART session immediately. This avoids a fragile
-     * two-window handoff on freshly flashed or schedule-less nodes. */
-    if ((switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) && ESPBridge_isHardwareRequestActive()) {
+     * Open a guarded upload-capable UART window immediately whenever firmware starts
+     * in CUSTOM or DEFAULT. The bridge itself idles out if no ESP request or UART
+     * traffic is present, which removes the reset-order race without leaving an
+     * unclaimed AudioMoth awake forever. */
+    if (switchPosition == AM_SWITCH_CUSTOM || switchPosition == AM_SWITCH_DEFAULT) {
 
         ESPBridge_setBusy(false);
         ESPBridge_setUploadAllowed(true);

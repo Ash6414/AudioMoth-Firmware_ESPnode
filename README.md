@@ -28,13 +28,16 @@ compatibility is intentionally being removed.
 - ESP request pin: PA7
 - AudioMoth busy pin: PA8
 - GPS support: disabled so the bridge owns PA7, PA8, PB9, PB10, and UART1
-- `OK BRIDGE_READY` repeats while the bridge service is idle
+- AudioMoth opens a guarded upload-capable bridge window on each CUSTOM/DEFAULT
+  wake, then idles out if no ESP request or UART traffic is present
+- `OK BRIDGE_READY` repeats while the bridge service is idle, including during
+  the guarded no-request grace window
 - `PING`, `STATUS`, `TIME`, `FASTCAP`, and `DONE` work in the bridge window
 - `LIST`, `GET`, `GETFAST`, `GETSTREAM`, `GETPIPE`, and `DELETE` work while
   bridge service is active and the scheduler has marked file upload safe
 - Newly flashed or schedule-less nodes still open a safe file-upload bridge
-  when ESP_REQ is asserted, so existing SD files can be recovered before the
-  next recording schedule is configured
+  on wake, so existing SD files can be recovered before the next recording
+  schedule is configured
 - `TESTSTREAM` sends a deterministic 1 MiB max framed stream without touching SD, for UART speed checks
 - `LIST` recursively walks SD card folders up to 4 levels deep
 - `LIST` includes any regular SD file except `CONFIG.TXT` / `config.txt`
@@ -60,9 +63,9 @@ production upload path uses ACKed 115200-baud frames so isolated byte errors are
 retried instead of failing the whole file.
 
 The bridge keeps the raw PA7 request-pin state separate from logical UART
-service availability. This lets the AudioMoth leave its time-sync service
-window after the ESP sets time, then enter the later upload-safe service window
-even on builds where PA7 is not sampled reliably.
+service availability. Startup uses a guarded upload window to avoid ESP32 and
+AudioMoth reset-order races, while the long-running service still uses PA7 and
+UART traffic to decide whether it should stay awake.
 
 ## ESP32 wiring
 
