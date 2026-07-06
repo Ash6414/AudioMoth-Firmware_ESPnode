@@ -39,7 +39,7 @@
 #define BRIDGE_REQ_PORT                     gpioPortA    /* a7, ESP output to AudioMoth */
 #define BRIDGE_REQ_PIN                      7
 
-#define BRIDGE_REQUIRE_REQ_PIN              1
+#define BRIDGE_REQUIRE_REQ_PIN              0
 
 #define RX_LINE_TIMEOUT_MS                  250
 #define SERVICE_IDLE_TIMEOUT_MS             30000
@@ -1158,7 +1158,7 @@ void ESPBridge_serviceUntil(uint32_t deadlineUnixSeconds) {
         WDOG_Feed();
 
         bool deadlineDone = deadlineReached(deadlineUnixSeconds);
-        bool requestActive = ESPBridge_isRequestActive();
+        bool requestActive = rawRequestPinActive();
         bool rxAvailable = uartRxAvailable();
 
         if (deadlineDone && !requestActive && !rxAvailable && idleMs >= SERVICE_IDLE_TIMEOUT_MS) break;

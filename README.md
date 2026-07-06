@@ -25,11 +25,12 @@ compatibility is intentionally being removed.
 - Command line reads use a bounded wall-time timeout even when noisy bytes are
   arriving, so Wi-Fi-side UART noise cannot trap the bridge inside one partial
   command forever
-- ESP request pin: PA7
+- ESP request pin: PA7. The production bridge keeps the old working logical
+  request fallback because successful field logs show `req=1 req_pin=0`.
 - AudioMoth busy pin: PA8
 - GPS support: disabled so the bridge owns PA7, PA8, PB9, PB10, and UART1
 - AudioMoth opens a guarded upload-capable bridge window on each CUSTOM/DEFAULT
-  wake, then idles out if no ESP request or UART traffic is present
+  wake, then idles out if no raw ESP request or UART traffic is present
 - `OK BRIDGE_READY` repeats while the bridge service is idle, including during
   the guarded no-request grace window
 - `PING`, `STATUS`, `TIME`, `FASTCAP`, and `DONE` work in the bridge window
@@ -64,8 +65,10 @@ retried instead of failing the whole file.
 
 The bridge keeps the raw PA7 request-pin state separate from logical UART
 service availability. Startup uses a guarded upload window to avoid ESP32 and
-AudioMoth reset-order races, while the long-running service still uses PA7 and
-UART traffic to decide whether it should stay awake.
+AudioMoth reset-order races, while the long-running service still uses raw PA7
+and UART traffic to decide whether it should stay awake. This intentionally
+matches the older functioning bridge behavior where the ESP could talk even
+when PA7 read low on the AudioMoth side.
 
 ## ESP32 wiring
 
