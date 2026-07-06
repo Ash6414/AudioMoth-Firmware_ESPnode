@@ -18,6 +18,9 @@ compatibility is intentionally being removed.
 - Bridge transport: hardware UART1 LOC2 on PB9/PB10, restored to the older
   functioning bridge path for stable ESP-to-AudioMoth command receive
 - RX handling: all ESP-to-AudioMoth commands remain at 115200 baud on UART1
+- UART1 RX interrupt bytes are buffered before the line parser reads them, so
+  bursty ESP control writes do not lose characters while the bridge is waiting
+  on timeouts or SD/server handoff commands
 - Command line reads use a bounded wall-time timeout even when noisy bytes are
   arriving, so Wi-Fi-side UART noise cannot trap the bridge inside one partial
   command forever
@@ -52,6 +55,11 @@ block. `GET` remains available as a compatibility command, but the matching
 production ESP32 upload path uses the ACKed `GETPIPE` pipe. The dashboard and
 production ESP command handler expose only the stable 115200-baud transfer
 path.
+
+The bridge keeps a small UART1 RX ring buffer fed by the stock GPS-interface RX
+interrupt path. This is important because the original polling-only reader could
+sleep for 1 ms just as the ESP sent a command line, causing chopped commands
+like `PIG`, `ST`, or `TI17`.
 
 The bridge keeps the raw PA7 request-pin state separate from logical UART
 service availability. Startup uses a guarded upload window to avoid ESP32 and

@@ -54,9 +54,22 @@ static volatile bool espTimeAccepted = false;
 
 static char lineBuffer[ESPBRIDGE_MAX_LINE];
 static uint8_t chunkBuffer[ESPBRIDGE_CHUNK_BYTES];
+static volatile uint8_t rxBuffer[ESPBRIDGE_RX_BUFFER_BYTES];
+static volatile uint16_t rxHead = 0;
+static volatile uint16_t rxTail = 0;
+static volatile bool rxOverflow = false;
 
 void ESPBridge_handleReceivedByte(uint8_t byte) {
-    (void)byte;
+    uint16_t next = rxHead + 1;
+    if (next >= ESPBRIDGE_RX_BUFFER_BYTES) next = 0;
+
+    if (next == rxTail) {
+        rxOverflow = true;
+        return;
+    }
+
+    rxBuffer[rxHead] = byte;
+    rxHead = next;
 }
 
 /* ---------------- UART primitives ---------------- */
@@ -70,6 +83,9 @@ static void configureBridgePins(void) {
 static void configureHardwareUart(uint32_t baud) {
     CMU_ClockEnable(BRIDGE_UART_CLOCK, true);
     USART_Reset(BRIDGE_UART);
+    rxHead = 0;
+    rxTail = 0;
+    rxOverflow = false;
 
     USART_InitAsync_TypeDef uartInit = USART_INITASYNC_DEFAULT;
     uartInit.enable = usartDisable;
@@ -78,6 +94,13 @@ static void configureHardwareUart(uint32_t baud) {
 
     BRIDGE_UART->ROUTE = UART_ROUTE_TXPEN | UART_ROUTE_RXPEN | BRIDGE_UART_LOCATION;
     USART_Enable(BRIDGE_UART, usartEnable);
+    while (BRIDGE_UART->STATUS & UART_STATUS_RXDATAV) {
+        (void)USART_Rx(BRIDGE_UART);
+    }
+    USART_IntClear(BRIDGE_UART, UART_IF_RXDATAV);
+    USART_IntEnable(BRIDGE_UART, UART_IF_RXDATAV);
+    NVIC_ClearPendingIRQ(UART1_RX_IRQn);
+    NVIC_EnableIRQ(UART1_RX_IRQn);
 }
 
 static void configureBridgeUart(void) {
@@ -89,6 +112,9 @@ static void stopBridgeUart(void) {
     while (!(BRIDGE_UART->STATUS & UART_STATUS_TXC)) {
         WDOG_Feed();
     }
+    USART_IntDisable(BRIDGE_UART, UART_IF_RXDATAV);
+    NVIC_DisableIRQ(UART1_RX_IRQn);
+    NVIC_ClearPendingIRQ(UART1_RX_IRQn);
     USART_Reset(BRIDGE_UART);
     CMU_ClockEnable(BRIDGE_UART_CLOCK, false);
     GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
@@ -119,6 +145,15 @@ static inline bool uartRxAvailable(void) {
 }
 
 static bool uartReadByte(uint8_t *byte) {
+    if (rxTail != rxHead) {
+        uint16_t tail = rxTail;
+        *byte = rxBuffer[tail];
+        tail += 1;
+        if (tail >= ESPBRIDGE_RX_BUFFER_BYTES) tail = 0;
+        rxTail = tail;
+        return true;
+    }
+
     if (!uartRxAvailable()) return false;
     *byte = USART_Rx(BRIDGE_UART);
     return true;
