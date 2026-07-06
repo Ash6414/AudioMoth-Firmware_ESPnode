@@ -3,7 +3,7 @@
  * AudioMoth Dev <-> ESP32 upload bridge.
  *
  * Protocol is ASCII commands plus framed binary payloads. AudioMoth owns the
- * microSD at all times; the ESP32 requests files over hardware UART1 only
+ * microSD at all times; the ESP32 requests files over UART1 on PB9/PB10
  * while the scheduler has opened a safe bridge window.
  *****************************************************************************/
 
@@ -16,7 +16,6 @@
 
 #include "em_cmu.h"
 #include "em_gpio.h"
-#include "em_timer.h"
 #include "em_usart.h"
 #include "em_wdog.h"
 
@@ -24,7 +23,7 @@
 #include "audiomoth.h"
 #include "espbridge.h"
 
-/* AudioMoth Dev left JST header. UART1 LOC2 is PB9 TX and PB10 RX. */
+/* AudioMoth Dev left JST header. PB9 is AudioMoth TX; PB10 is AudioMoth RX. */
 #define BRIDGE_UART                         UART1
 #define BRIDGE_UART_CLOCK                   cmuClock_UART1
 #define BRIDGE_UART_LOCATION                UART_ROUTE_LOCATION_LOC2
@@ -52,9 +51,6 @@ static volatile bool uploadAllowed = false;
 static bool filesystemEnabled = false;
 static bool serviceActive = false;
 static volatile bool espTimeAccepted = false;
-static uint32_t fastPayloadBaud = ESPBRIDGE_FAST_BAUD;
-static uint32_t softUartTicksPerBit = 0;
-static uint32_t softUartTicksPerMillisecond = 0;
 
 static char lineBuffer[ESPBRIDGE_MAX_LINE];
 static uint8_t chunkBuffer[ESPBRIDGE_CHUNK_BYTES];
@@ -65,87 +61,43 @@ void ESPBridge_handleReceivedByte(uint8_t byte) {
 
 /* ---------------- UART primitives ---------------- */
 
-static void updateUartTiming(uint32_t baud) {
-    uint32_t timerFrequency = CMU_ClockFreqGet(cmuClock_TIMER1);
-    softUartTicksPerBit = (timerFrequency + baud / 2) / baud;
-    if (softUartTicksPerBit == 0) softUartTicksPerBit = 1;
-    softUartTicksPerMillisecond = (timerFrequency + 500) / 1000;
-}
-
-static USART_OVS_TypeDef oversamplingForBaud(uint32_t baud) {
-    return baud >= 921600UL ? usartOVS8 : usartOVS16;
-}
-
 static void configureBridgePins(void) {
     CMU_ClockEnable(cmuClock_GPIO, true);
-    CMU_ClockEnable(BRIDGE_UART_CLOCK, true);
-
-    USART_Reset(BRIDGE_UART);
-
     GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
     GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
 }
 
-static void startSoftUartTimer(void) {
-    CMU_ClockEnable(cmuClock_TIMER1, true);
-    TIMER_Reset(TIMER1);
+static void configureHardwareUart(uint32_t baud) {
+    CMU_ClockEnable(BRIDGE_UART_CLOCK, true);
+    USART_Reset(BRIDGE_UART);
 
-    TIMER_Init_TypeDef timerInit = TIMER_INIT_DEFAULT;
-    timerInit.enable = false;
-    timerInit.prescale = timerPrescale1;
+    USART_InitAsync_TypeDef uartInit = USART_INITASYNC_DEFAULT;
+    uartInit.enable = usartDisable;
+    uartInit.baudrate = baud;
+    USART_InitAsync(BRIDGE_UART, &uartInit);
 
-    TIMER_Init(TIMER1, &timerInit);
-    TIMER_TopSet(TIMER1, UINT16_MAX);
-    TIMER_CounterSet(TIMER1, 0);
-    TIMER_Enable(TIMER1, true);
-
-    updateUartTiming(ESPBRIDGE_DEFAULT_BAUD);
-}
-
-static void stopSoftUartTimer(void) {
-    TIMER_Enable(TIMER1, false);
-    TIMER_Reset(TIMER1);
-    CMU_ClockEnable(cmuClock_TIMER1, false);
-    softUartTicksPerBit = 0;
-    softUartTicksPerMillisecond = 0;
+    BRIDGE_UART->ROUTE = UART_ROUTE_TXPEN | UART_ROUTE_RXPEN | BRIDGE_UART_LOCATION;
+    USART_Enable(BRIDGE_UART, usartEnable);
 }
 
 static void configureBridgeUart(void) {
     configureBridgePins();
-    startSoftUartTimer();
-
-    USART_InitAsync_TypeDef init = USART_INITASYNC_DEFAULT;
-    init.baudrate = ESPBRIDGE_DEFAULT_BAUD;
-    init.oversampling = oversamplingForBaud(ESPBRIDGE_DEFAULT_BAUD);
-    init.enable = usartEnable;
-    USART_InitAsync(BRIDGE_UART, &init);
-
-    BRIDGE_UART->ROUTE = UART_ROUTE_RXPEN | UART_ROUTE_TXPEN | BRIDGE_UART_LOCATION;
-    while (BRIDGE_UART->STATUS & USART_STATUS_RXDATAV) {
-        (void)BRIDGE_UART->RXDATA;
-    }
+    configureHardwareUart(ESPBRIDGE_DEFAULT_BAUD);
 }
 
 static void stopBridgeUart(void) {
-    while ((BRIDGE_UART->STATUS & USART_STATUS_TXC) == 0) {
+    while (!(BRIDGE_UART->STATUS & UART_STATUS_TXC)) {
         WDOG_Feed();
     }
     USART_Reset(BRIDGE_UART);
     CMU_ClockEnable(BRIDGE_UART_CLOCK, false);
     GPIO_PinModeSet(BRIDGE_TX_PORT, BRIDGE_TX_PIN, gpioModePushPull, 1);
     GPIO_PinModeSet(BRIDGE_RX_PORT, BRIDGE_RX_PIN, gpioModeInputPull, 1);
-    stopSoftUartTimer();
-}
-
-static void softUartDelayTicks(uint32_t ticks) {
-    uint16_t start = (uint16_t)TIMER_CounterGet(TIMER1);
-    while ((uint16_t)(TIMER_CounterGet(TIMER1) - start) < ticks) {
-    }
 }
 
 static void bridgeDelayMilliseconds(uint32_t milliseconds) {
     for (uint32_t i = 0; i < milliseconds; i += 1) {
-        softUartDelayTicks(softUartTicksPerMillisecond);
+        AudioMoth_delay(1);
         WDOG_Feed();
     }
 }
@@ -163,20 +115,20 @@ static inline bool rawRequestPinActive(void) {
 }
 
 static inline bool uartRxAvailable(void) {
-    return (BRIDGE_UART->STATUS & USART_STATUS_RXDATAV) != 0;
+    return (BRIDGE_UART->STATUS & UART_STATUS_RXDATAV) != 0;
 }
 
 static bool uartReadByte(uint8_t *byte) {
-    if ((BRIDGE_UART->STATUS & USART_STATUS_RXDATAV) == 0) return false;
-    *byte = (uint8_t)BRIDGE_UART->RXDATA;
+    if (!uartRxAvailable()) return false;
+    *byte = USART_Rx(BRIDGE_UART);
     return true;
 }
 
 static void uartWriteByte(uint8_t byte) {
-    while ((BRIDGE_UART->STATUS & USART_STATUS_TXBL) == 0) {
+    while (!(BRIDGE_UART->STATUS & UART_STATUS_TXBL)) {
         WDOG_Feed();
     }
-    BRIDGE_UART->TXDATA = byte;
+    USART_Tx(BRIDGE_UART, byte);
 }
 
 static void uartWrite(const void *data, uint32_t length) {
@@ -208,15 +160,55 @@ static void sendLine(const char *fmt, ...) {
     uartWrite("\n", 1);
 }
 
+static bool commandStartsHere(const char *line) {
+    return strcmp(line, "PING") == 0 ||
+           strcmp(line, "STATUS") == 0 ||
+           strcmp(line, "LIST") == 0 ||
+           strcmp(line, "DONE") == 0 ||
+           strncmp(line, "TIME ", 5) == 0 ||
+           strncmp(line, "GET ", 4) == 0 ||
+           strncmp(line, "GETPIPE ", 8) == 0 ||
+           strncmp(line, "DELETE ", 7) == 0 ||
+           strcmp(line, "NEXT") == 0 ||
+           strncmp(line, "NEXT ", 5) == 0 ||
+           strcmp(line, "STOP") == 0 ||
+           strncmp(line, "ACK ", 4) == 0 ||
+           strncmp(line, "NAK ", 4) == 0;
+}
+
+static void normaliseCommandLine(void) {
+    for (uint32_t i = 0; lineBuffer[i] != 0; i += 1) {
+        if (commandStartsHere(lineBuffer + i)) {
+            if (i > 0) memmove(lineBuffer, lineBuffer + i, strlen(lineBuffer + i) + 1);
+            return;
+        }
+    }
+}
+
+static void sendUnknownCommand(void) {
+    char hex[64];
+    uint32_t out = 0;
+    uint32_t length = strlen(lineBuffer);
+    uint32_t limit = length < 16 ? length : 16;
+
+    for (uint32_t i = 0; i < limit && out + 4 < sizeof(hex); i += 1) {
+        int written = snprintf(hex + out, sizeof(hex) - out, "%s%02X", i == 0 ? "" : " ", (uint8_t)lineBuffer[i]);
+        if (written < 0) break;
+        out += (uint32_t)written;
+    }
+
+    if (out >= sizeof(hex)) out = sizeof(hex) - 1;
+    hex[out] = 0;
+
+    sendLine("ERR CMD unknown_command len=%lu text=%s hex=%s", (unsigned long)length, lineBuffer, hex);
+}
+
 /* Returns true when a complete line was read. CR is ignored. */
 static bool readLine(uint32_t timeoutMs) {
     uint32_t index = 0;
-    uint32_t elapsedTicks = 0;
-    uint32_t timeoutTicks = timeoutMs * softUartTicksPerMillisecond;
-    uint32_t pollTicks = softUartTicksPerBit / 4;
-    if (pollTicks == 0) pollTicks = 1;
+    uint32_t idleMs = 0;
 
-    while (elapsedTicks < timeoutTicks && index < ESPBRIDGE_MAX_LINE - 1) {
+    while (idleMs < timeoutMs && index < ESPBRIDGE_MAX_LINE - 1) {
         WDOG_Feed();
 
         uint8_t byte;
@@ -224,29 +216,19 @@ static bool readLine(uint32_t timeoutMs) {
             char c = (char)byte;
             if (c == '\n') {
                 lineBuffer[index] = 0;
-                return index > 0;
+                normaliseCommandLine();
+                return lineBuffer[0] != 0;
             }
-            if (c != '\r') lineBuffer[index++] = c;
+            if (c != '\r' && byte >= 0x20 && byte <= 0x7E) lineBuffer[index++] = c;
+            idleMs = 0;
         } else {
-            softUartDelayTicks(pollTicks);
+            bridgeDelayMilliseconds(1);
+            idleMs += 1;
         }
-
-        elapsedTicks += pollTicks;
     }
 
     lineBuffer[index] = 0;
     return false;
-}
-
-static void bridgeSetBaud(uint32_t baud) {
-    while ((BRIDGE_UART->STATUS & USART_STATUS_TXC) == 0) {
-        WDOG_Feed();
-    }
-    USART_BaudrateAsyncSet(BRIDGE_UART, 0, baud, oversamplingForBaud(baud));
-    updateUartTiming(baud);
-    while (BRIDGE_UART->STATUS & USART_STATUS_RXDATAV) {
-        (void)BRIDGE_UART->RXDATA;
-    }
 }
 
 /* ---------------- CRC and validation ---------------- */
@@ -261,18 +243,6 @@ static uint32_t crc32Update(uint32_t crc, const uint8_t *data, uint32_t length) 
         }
     }
     return ~crc;
-}
-
-static void sendFastTrainingPreamble(void) {
-    bridgeDelayMilliseconds(40);
-    for (uint32_t i = 0; i < ESPBRIDGE_TRAINING_BYTES; i += 1) {
-        uartWriteByte(0x55);
-    }
-    uartWrite("\n", 1);
-    for (uint32_t i = 0; i < 3; i += 1) {
-        sendLine("OK FAST_READY");
-        bridgeDelayMilliseconds(5);
-    }
 }
 
 static bool charEqualsIgnoreCase(char a, char b) {
@@ -470,26 +440,7 @@ static void commandList(void) {
     sendLine("END");
 }
 
-static bool supportedBaud(uint32_t baud) {
-    return baud == ESPBRIDGE_DEFAULT_BAUD ||
-           baud == 230400UL ||
-           baud == 460800UL ||
-           baud == 921600UL ||
-           baud == 1000000UL;
-}
-
-static void commandFastCapability(char *args) {
-    unsigned long baud = 0;
-    if (sscanf(args, "%lu", &baud) != 1 || !supportedBaud((uint32_t)baud)) {
-        sendLine("ERR ARG unsupported_baud");
-        return;
-    }
-
-    fastPayloadBaud = (uint32_t)baud;
-    sendLine("OK FASTCAP %lu %u", baud, ESPBRIDGE_CHUNK_BYTES);
-}
-
-static void commandGet(char *args, bool fastPayload) {
+static void commandGet(char *args) {
     char path[ESPBRIDGE_MAX_PATH];
     unsigned long offset = 0;
     unsigned long requested = ESPBRIDGE_CHUNK_BYTES;
@@ -556,156 +507,9 @@ static void commandGet(char *args, bool fastPayload) {
     }
 
     uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
-    if (!fastPayload) {
-        sendLine("DATA %s %lu %u %08lX %lu", path, offset, (unsigned int)bytesRead,
-                 (unsigned long)crc, (unsigned long)sdReadMilliseconds);
-        uartWrite(chunkBuffer, bytesRead);
-        return;
-    }
-
-    sendLine("FASTDATA %s %lu %u %08lX %lu %lu", path, offset, (unsigned int)bytesRead,
-             (unsigned long)crc, (unsigned long)fastPayloadBaud, (unsigned long)sdReadMilliseconds);
-    bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
-    bridgeSetBaud(fastPayloadBaud);
-
-    uint32_t trainingBytes = fastPayloadBaud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
-        ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
-        : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
-    for (uint32_t i = 0; i < trainingBytes; i += 1) {
-        uartWriteByte(0x55);
-    }
-    static const uint8_t magic[] = {0xA5, 0x5A, 0xC3, 0x3C};
-    uartWrite(magic, sizeof(magic));
+    sendLine("DATA %s %lu %u %08lX %lu", path, offset, (unsigned int)bytesRead,
+             (unsigned long)crc, (unsigned long)sdReadMilliseconds);
     uartWrite(chunkBuffer, bytesRead);
-
-    bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
-    bridgeDelayMilliseconds(5);
-    sendLine("OK FASTDATA %lu %u", offset, (unsigned int)bytesRead);
-}
-
-static void commandGetStream(char *args) {
-    char path[ESPBRIDGE_MAX_PATH];
-    unsigned long offset = 0;
-    unsigned long requested = ESPBRIDGE_STREAM_BYTES;
-    unsigned long baud = ESPBRIDGE_FAST_BAUD;
-
-    if (!fileCommandsAllowed()) {
-        sendLine("ERR BUSY upload_not_allowed");
-        return;
-    }
-    if (sscanf(args, "%95s %lu %lu %lu", path, &offset, &requested, &baud) < 3) {
-        sendLine("ERR ARG usage_GETSTREAM_path_offset_bytes_baud");
-        return;
-    }
-    if (!validPath(path, true)) {
-        sendLine("ERR PATH invalid_path");
-        return;
-    }
-    if (!supportedBaud((uint32_t)baud)) {
-        sendLine("ERR ARG unsupported_baud");
-        return;
-    }
-    if (requested == 0 || requested > ESPBRIDGE_STREAM_BYTES) requested = ESPBRIDGE_STREAM_BYTES;
-    if (!ensureFilesystem()) {
-        sendLine("ERR SD filesystem_enable_failed");
-        return;
-    }
-
-    rawFilesystemBegin();
-
-    FIL file;
-    FRESULT res = f_open(&file, path, FA_READ);
-    if (res != FR_OK) {
-        rawFilesystemEnd();
-        sendLine("ERR OPEN %u", (unsigned int)res);
-        return;
-    }
-
-    FSIZE_t size = f_size(&file);
-    if ((FSIZE_t)offset > size) {
-        f_close(&file);
-        rawFilesystemEnd();
-        sendLine("ERR RANGE offset_past_eof");
-        return;
-    }
-
-    uint32_t available = (uint32_t)(size - (FSIZE_t)offset);
-    uint32_t totalBytes = (uint32_t)requested > available ? available : (uint32_t)requested;
-
-    res = f_lseek(&file, (FSIZE_t)offset);
-    if (res != FR_OK) {
-        f_close(&file);
-        rawFilesystemEnd();
-        sendLine("ERR SEEK %u", (unsigned int)res);
-        return;
-    }
-
-    sendLine("STREAM %s %lu %lu %u %lu", path, offset, (unsigned long)totalBytes,
-             ESPBRIDGE_CHUNK_BYTES, baud);
-    if (baud != ESPBRIDGE_DEFAULT_BAUD) {
-        bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
-        bridgeSetBaud((uint32_t)baud);
-
-        uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
-            ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
-            : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
-        for (uint32_t i = 0; i < trainingBytes; i += 1) {
-            uartWriteByte(0x55);
-        }
-    }
-
-    static const uint8_t streamMagic[] = {0xA5, 0x5A, 0xD7, 0x7D};
-    uint32_t sent = 0;
-    bool readError = false;
-
-    while (sent < totalBytes) {
-        WDOG_Feed();
-        uint32_t remaining = totalBytes - sent;
-        UINT toRead = remaining > ESPBRIDGE_CHUNK_BYTES ? ESPBRIDGE_CHUNK_BYTES : (UINT)remaining;
-        UINT bytesRead = 0;
-
-        uint32_t readStartSeconds, readStartMilliseconds;
-        AudioMoth_getTime(&readStartSeconds, &readStartMilliseconds);
-        res = f_read(&file, chunkBuffer, toRead, &bytesRead);
-        uint32_t sdReadMilliseconds = elapsedServiceMilliseconds(readStartSeconds, readStartMilliseconds);
-
-        if (res != FR_OK || bytesRead == 0) {
-            readError = true;
-            break;
-        }
-
-        uint32_t frameOffset = (uint32_t)offset + sent;
-        uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
-        uartWrite(streamMagic, sizeof(streamMagic));
-        uartWriteUInt32LE(frameOffset);
-        uartWriteUInt16LE((uint16_t)bytesRead);
-        uartWriteUInt32LE(crc);
-        uartWriteUInt32LE(sdReadMilliseconds);
-        uartWrite(chunkBuffer, bytesRead);
-
-        sent += bytesRead;
-    }
-
-    FRESULT closeRes = f_close(&file);
-    rawFilesystemEnd();
-    if (baud != ESPBRIDGE_DEFAULT_BAUD) {
-        bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
-        bridgeDelayMilliseconds(5);
-    }
-
-    if (readError || sent != totalBytes) {
-        sendLine("ERR STREAM read_failed %lu %lu", (unsigned long)sent, (unsigned long)totalBytes);
-        return;
-    }
-    if (closeRes != FR_OK) {
-        sendLine("ERR CLOSE %u", (unsigned int)closeRes);
-        return;
-    }
-
-    for (uint32_t i = 0; i < 4; i += 1) {
-        sendLine("OK STREAM %s %lu %lu", path, offset, (unsigned long)sent);
-        bridgeDelayMilliseconds(15);
-    }
 }
 
 static bool pipeAckAccepted(uint32_t frameOffset, uint16_t frameLength) {
@@ -760,7 +564,7 @@ static void commandGetPipe(char *args) {
         sendLine("ERR PATH invalid_path");
         return;
     }
-    if (!supportedBaud((uint32_t)baud)) {
+    if (baud != ESPBRIDGE_PIPE_BAUD) {
         sendLine("ERR ARG unsupported_baud");
         return;
     }
@@ -825,18 +629,6 @@ static void commandGetPipe(char *args) {
             : blockRemaining;
         uint32_t blockSent = 0;
 
-        if (baud != ESPBRIDGE_DEFAULT_BAUD) {
-            bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
-            bridgeSetBaud((uint32_t)baud);
-
-            uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
-                ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
-                : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
-            for (uint32_t i = 0; i < trainingBytes; i += 1) {
-                uartWriteByte(0x55);
-            }
-        }
-
         while (blockSent < blockTarget) {
             WDOG_Feed();
             uint32_t remaining = blockTarget - blockSent;
@@ -856,10 +648,6 @@ static void commandGetPipe(char *args) {
             uint32_t frameOffset = blockOffset + blockSent;
             uint32_t crc = crc32Update(0, chunkBuffer, bytesRead);
             if (!sendPipeFrameWithAck(streamMagic, frameOffset, (uint16_t)bytesRead, crc, sdReadMilliseconds)) {
-                if (baud != ESPBRIDGE_DEFAULT_BAUD) {
-                    bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
-                    bridgeDelayMilliseconds(5);
-                }
                 f_close(&file);
                 rawFilesystemEnd();
                 sendLine("ERR PIPE ack_failed %lu %u", (unsigned long)frameOffset, (unsigned int)bytesRead);
@@ -867,11 +655,6 @@ static void commandGetPipe(char *args) {
             }
 
             blockSent += bytesRead;
-        }
-
-        if (baud != ESPBRIDGE_DEFAULT_BAUD) {
-            bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
-            bridgeDelayMilliseconds(5);
         }
 
         if (readError || blockSent != blockTarget) {
@@ -925,64 +708,6 @@ static void commandGetPipe(char *args) {
     sendLine("OK PIPEDONE %s %lu %lu", path, offset, (unsigned long)sentTotal);
 }
 
-static void fillTestStreamPayload(uint32_t offset, uint8_t *buffer, uint32_t length) {
-    for (uint32_t i = 0; i < length; i += 1) {
-        buffer[i] = (uint8_t)((offset + i) & 0xFFU);
-    }
-}
-
-static void commandTestStream(char *args) {
-    unsigned long requested = ESPBRIDGE_TEST_STREAM_BYTES;
-    unsigned long baud = ESPBRIDGE_FAST_BAUD;
-
-    if (sscanf(args, "%lu %lu", &requested, &baud) < 1) {
-        sendLine("ERR ARG usage_TESTSTREAM_bytes_baud");
-        return;
-    }
-    if (!supportedBaud((uint32_t)baud) || baud == ESPBRIDGE_DEFAULT_BAUD) {
-        sendLine("ERR ARG unsupported_baud");
-        return;
-    }
-    if (requested == 0 || requested > ESPBRIDGE_TEST_STREAM_BYTES) requested = ESPBRIDGE_TEST_STREAM_BYTES;
-
-    sendLine("TESTSTREAM %lu %u %lu", requested, ESPBRIDGE_CHUNK_BYTES, baud);
-    bridgeDelayMilliseconds(ESPBRIDGE_FAST_SWITCH_GUARD_MS);
-    bridgeSetBaud((uint32_t)baud);
-
-    uint32_t trainingBytes = baud >= ESPBRIDGE_QUICK_BAUD_THRESHOLD
-        ? ESPBRIDGE_FAST_PAYLOAD_TRAINING_BYTES
-        : ESPBRIDGE_SLOW_PAYLOAD_TRAINING_BYTES;
-    for (uint32_t i = 0; i < trainingBytes; i += 1) {
-        uartWriteByte(0x55);
-    }
-
-    static const uint8_t streamMagic[] = {0xA5, 0x5A, 0xD7, 0x7D};
-    uint32_t sent = 0;
-    while (sent < (uint32_t)requested) {
-        WDOG_Feed();
-        uint32_t remaining = (uint32_t)requested - sent;
-        uint32_t frameBytes = remaining > ESPBRIDGE_CHUNK_BYTES ? ESPBRIDGE_CHUNK_BYTES : remaining;
-        fillTestStreamPayload(sent, chunkBuffer, frameBytes);
-
-        uint32_t crc = crc32Update(0, chunkBuffer, frameBytes);
-        uartWrite(streamMagic, sizeof(streamMagic));
-        uartWriteUInt32LE(sent);
-        uartWriteUInt16LE((uint16_t)frameBytes);
-        uartWriteUInt32LE(crc);
-        uartWriteUInt32LE(0);
-        uartWrite(chunkBuffer, frameBytes);
-
-        sent += frameBytes;
-    }
-
-    bridgeSetBaud(ESPBRIDGE_DEFAULT_BAUD);
-    bridgeDelayMilliseconds(5);
-    for (uint32_t i = 0; i < 4; i += 1) {
-        sendLine("OK TESTSTREAM %lu", (unsigned long)sent);
-        bridgeDelayMilliseconds(15);
-    }
-}
-
 static void commandDelete(char *args) {
     char path[ESPBRIDGE_MAX_PATH];
 
@@ -1012,25 +737,6 @@ static void commandDelete(char *args) {
     else sendLine("ERR DELETE %u", (unsigned int)res);
 }
 
-static void commandBaud(char *args) {
-    unsigned long baud = 0;
-    if (sscanf(args, "%lu", &baud) != 1) {
-        sendLine("ERR ARG unsupported_baud");
-        return;
-    }
-
-    if (!supportedBaud((uint32_t)baud)) {
-        sendLine("ERR ARG unsupported_baud");
-        return;
-    }
-
-    sendLine("OK BAUD %lu", baud);
-    bridgeSetBaud((uint32_t)baud);
-    if (baud != ESPBRIDGE_DEFAULT_BAUD) {
-        sendFastTrainingPreamble();
-    }
-}
-
 static void commandTime(char *args) {
     unsigned long seconds = 0;
     unsigned long milliseconds = 0;
@@ -1047,7 +753,7 @@ static void commandTime(char *args) {
 static void commandStatus(uint32_t deadlineUnixSeconds) {
     uint32_t now, ms;
     AudioMoth_getTime(&now, &ms);
-    sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu proto=%u stream=%u stream_baud=%lu stream_bytes=%lu pipe=%u pipe_baud=%lu pipe_bytes=%lu pipe_frame=%u pipe_ack=1",
+    sendLine("OK STATUS busy=%u allowed=%u req=%u req_pin=%u now=%lu ms=%lu deadline=%lu proto=%u pipe=%u pipe_baud=%lu pipe_bytes=%lu pipe_frame=%u pipe_ack=1",
              bridgeBusy ? 1 : 0,
              fileCommandsAllowed() ? 1 : 0,
              ESPBridge_isRequestActive() ? 1 : 0,
@@ -1056,9 +762,6 @@ static void commandStatus(uint32_t deadlineUnixSeconds) {
              (unsigned long)ms,
              (unsigned long)deadlineUnixSeconds,
              ESPBRIDGE_PROTOCOL_VERSION,
-             ESPBRIDGE_CONTROL_BAUD_STREAM,
-             (unsigned long)ESPBRIDGE_DEFAULT_BAUD,
-             (unsigned long)ESPBRIDGE_STREAM_BYTES,
              ESPBRIDGE_PIPE_STREAM,
              (unsigned long)ESPBRIDGE_PIPE_BAUD,
              (unsigned long)ESPBRIDGE_PIPE_BLOCK_BYTES,
@@ -1068,10 +771,6 @@ static void commandStatus(uint32_t deadlineUnixSeconds) {
 static bool handleCommand(uint32_t deadlineUnixSeconds) {
     if (strcmp(lineBuffer, "PING") == 0) {
         sendLine("OK PONG");
-    } else if (strncmp(lineBuffer, "FASTCAP ", 8) == 0) {
-        commandFastCapability(lineBuffer + 8);
-    } else if (strncmp(lineBuffer, "BAUD ", 5) == 0) {
-        commandBaud(lineBuffer + 5);
     } else if (strcmp(lineBuffer, "STATUS") == 0) {
         commandStatus(deadlineUnixSeconds);
     } else if (strncmp(lineBuffer, "TIME ", 5) == 0) {
@@ -1079,22 +778,16 @@ static bool handleCommand(uint32_t deadlineUnixSeconds) {
     } else if (strcmp(lineBuffer, "LIST") == 0) {
         commandList();
     } else if (strncmp(lineBuffer, "GET ", 4) == 0) {
-        commandGet(lineBuffer + 4, false);
-    } else if (strncmp(lineBuffer, "GETFAST ", 8) == 0) {
-        commandGet(lineBuffer + 8, true);
-    } else if (strncmp(lineBuffer, "GETSTREAM ", 10) == 0) {
-        commandGetStream(lineBuffer + 10);
+        commandGet(lineBuffer + 4);
     } else if (strncmp(lineBuffer, "GETPIPE ", 8) == 0) {
         commandGetPipe(lineBuffer + 8);
-    } else if (strncmp(lineBuffer, "TESTSTREAM ", 11) == 0) {
-        commandTestStream(lineBuffer + 11);
     } else if (strncmp(lineBuffer, "DELETE ", 7) == 0) {
         commandDelete(lineBuffer + 7);
     } else if (strcmp(lineBuffer, "DONE") == 0) {
         sendLine("OK DONE");
         return true;
     } else {
-        sendLine("ERR CMD unknown_command");
+        sendUnknownCommand();
     }
 
     return false;

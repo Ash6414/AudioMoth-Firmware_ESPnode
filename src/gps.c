@@ -6,10 +6,10 @@
  * the ESP bridge needs:
  *   - PA7: GPS enable in stock firmware, ESP_REQ in the bridge
  *   - PA8/TIMER2: GPS PPS in stock firmware, MOTH_BUSY in the bridge
- *   - PB9/PB10/UART1: GPS serial path in stock firmware, bridge UART here
+ *   - PB9/PB10/UART1: GPS serial path in stock firmware, ESP bridge UART here
  *
  * For this prototype, GPS and magnetic-switch support are intentionally disabled
- * so ESPBridge owns those pins and UART1 for the full runtime.
+ * so ESPBridge owns those pins for the full runtime.
  *****************************************************************************/
 
 #include <stdint.h>

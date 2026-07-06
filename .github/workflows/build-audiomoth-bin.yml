@@ -64,7 +64,6 @@ jobs:
             firmware/inc/digitalfilter.h
             firmware/inc/gps.h
             firmware/tools/apply-espbridge-request-service.py
-            firmware/tools/apply-espbridge-hardware-uart.py
             firmware/tools/apply-espbridge-optional-request.py
             firmware/tools/apply-espbridge-sd-info.py
             firmware/tools/apply-espbridge-ready-beacon.py
@@ -101,7 +100,7 @@ jobs:
           grep -F 'sdReadMilliseconds' firmware/src/espbridge.c
           grep -F 'ESPBridge_handleReceivedByte' firmware/src/espbridge.c
           grep -F 'ESPBridge_handleReceivedByte(byte);' firmware/src/gps.c
-          grep -F 'fileLooksLikeWav' firmware/src/espbridge.c
+          grep -F 'isConfigTxtPath' firmware/src/espbridge.c
 
       - name: Install ARM GCC and build tools
         shell: bash
@@ -141,18 +140,17 @@ jobs:
           grep -n 'ESPBRIDGE_DEFAULT_BAUD' project/inc/espbridge.h
           grep -n 'OK BRIDGE_READY\|OK PONG\|OK DONE' project/src/espbridge.c
 
-      - name: Apply hardware UART bridge patch
+      - name: Verify stable hardware UART1 bridge transport
         shell: bash
         run: |
           set -euo pipefail
-          python3 firmware/tools/apply-espbridge-hardware-uart.py
-          grep -n 'USART_InitAsync_TypeDef init' project/src/espbridge.c
-          grep -n 'UART_ROUTE_RXPEN | UART_ROUTE_TXPEN' project/src/espbridge.c
-          grep -n 'oversamplingForBaud' project/src/espbridge.c
-          grep -n 'stopBridgeUart' project/src/espbridge.c
-          grep -n 'bridgeSetBaud' project/src/espbridge.c
-          grep -n 'BRIDGE_UART->STATUS & USART_STATUS_RXDATAV' project/src/espbridge.c
-          grep -n 'BRIDGE_UART->RXDATA' project/src/espbridge.c
+          grep -n 'USART_InitAsync(BRIDGE_UART' project/src/espbridge.c
+          grep -n 'UART_ROUTE_TXPEN | UART_ROUTE_RXPEN | BRIDGE_UART_LOCATION' project/src/espbridge.c
+          grep -n 'UART_STATUS_RXDATAV' project/src/espbridge.c
+          grep -n 'USART_Tx(BRIDGE_UART' project/src/espbridge.c
+          grep -n 'USART_BaudrateAsyncSet' project/src/espbridge.c
+          grep -n 'static void stopBridgeUart' project/src/espbridge.c
+          grep -n 'static void bridgeSetBaud' project/src/espbridge.c
           grep -n 'FASTDATA ' project/src/espbridge.c
           grep -n 'GETSTREAM ' project/src/espbridge.c
           grep -n 'GETPIPE ' project/src/espbridge.c
@@ -185,7 +183,7 @@ jobs:
           python3 firmware/tools/apply-espbridge-optional-request.py
           python3 firmware/tools/apply-espbridge-sd-info.py
           grep -n '#define BRIDGE_REQUIRE_REQ_PIN              0' project/src/espbridge.c
-          grep -n 'bool requestActive = ESPBridge_isRequestActive();' project/src/espbridge.c
+          grep -n 'bool requestActive = rawRequestPinActive();' project/src/espbridge.c
           grep -n 'espTimeAccepted = true' project/src/espbridge.c
           grep -n 'ESPBridge_hasAcceptedTime' project/src/espbridge.c
           grep -n 'fileCommandsAllowed' project/src/espbridge.c
@@ -291,7 +289,7 @@ jobs:
             echo "espbridge_pipe_ack_timeout_ms=750"
             echo "espbridge_test_stream_bytes=1048576"
             echo "espbridge_sd_read_timing=header_milliseconds"
-            echo "espbridge_transport=uart1_hardware_loc2_pb9_tx_pb10_rx"
+            echo "espbridge_transport=hardware_uart1_loc2_pb9_tx_pb10_rx"
             echo "espbridge_request_service=hardware_uart1_115200_control_115200baud_acked_pipe_boot_or_idle_file_service_default_or_custom_any_sd_file_skip_config_sd_power_guard_skip_unsafe_sd_info"
             echo "service_window_fix=startup_request_is_upload_capable_no_second_window_handoff_required"
             echo "startup_upload_service=true"

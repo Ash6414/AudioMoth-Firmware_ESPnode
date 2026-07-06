@@ -11,57 +11,47 @@ compatibility is intentionally being removed.
 
 - Firmware name: `AudioMoth-Firmware-Basic`
 - Control UART: `115200`
-- Fast one-way stream UARTs supported: `230400`, `460800`, `921600`
 - Current production upload path: protocol v4 ACKed `GETPIPE` at stable `115200` AudioMoth-to-ESP payload baud
-- Fast stream startup: 20 ms guard, then `0x55` training bytes and framed binary data
-- Lower payload rates use a shorter 128-byte training preamble
 - UART pipe frame: 2048 bytes with CRC32 and ESP ACK/NAK retry
 - Pipe payload: up to 65536 bytes per server block, sent as CRC32-checked 2048-byte frames
 - Each data header reports SD read milliseconds for end-to-end bottleneck measurement
-- Bridge transport: EFM32 `UART1` LOC2 hardware route on PB9/PB10
-- RX handling: all ESP-to-AudioMoth commands remain at 115200 baud; UART1 is
-  polled directly with the interrupt buffer as a backup so SD-backed streams
-  can keep accepting control commands after each chunk
+- Bridge transport: hardware UART1 LOC2 on PB9/PB10, restored to the older
+  functioning bridge path for stable ESP-to-AudioMoth command receive
+- RX handling: all ESP-to-AudioMoth commands remain at 115200 baud on UART1
 - Command line reads use a bounded wall-time timeout even when noisy bytes are
   arriving, so Wi-Fi-side UART noise cannot trap the bridge inside one partial
   command forever
 - ESP request pin: PA7. The production bridge keeps the old working logical
   request fallback because successful field logs show `req=1 req_pin=0`.
 - AudioMoth busy pin: PA8
-- GPS support: disabled so the bridge owns PA7, PA8, PB9, PB10, and UART1
+- GPS support: disabled so the bridge owns PA7, PA8, PB9, and PB10
 - AudioMoth opens a guarded upload-capable bridge window on each CUSTOM/DEFAULT
   wake, then idles out if no raw ESP request or UART traffic is present
 - `OK BRIDGE_READY` repeats while the bridge service is idle, including during
   the guarded no-request grace window
-- `PING`, `STATUS`, `TIME`, `FASTCAP`, and `DONE` work in the bridge window
-- `LIST`, `GET`, `GETFAST`, `GETSTREAM`, `GETPIPE`, and `DELETE` work while
+- `PING`, `STATUS`, `TIME`, and `DONE` work in the bridge window
+- `LIST`, `GET`, `GETPIPE`, and `DELETE` work while
   bridge service is active and the scheduler has marked file upload safe
 - Newly flashed or schedule-less nodes still open a safe file-upload bridge
   on wake, so existing SD files can be recovered before the next recording
   schedule is configured
-- `TESTSTREAM` sends a deterministic 1 MiB max framed stream without touching SD, for UART speed checks
 - `LIST` recursively walks SD card folders up to 4 levels deep
 - `LIST` includes any regular SD file except `CONFIG.TXT` / `config.txt`
 - File discovery does not require a `.WAV` suffix
 - `LIST` emits `SD total_kb=... free_kb=...` before file entries
 
-The 115200 bridge rate makes startup tolerant of resets and avoids the weak
-high-speed ESP-to-AudioMoth receive direction. A matching ESP uses `GETPIPE`
-to send one 115200-baud command, then AudioMoth keeps the SD file open and
-streams repeated 115200-baud payload blocks. Each block is split into framed
+The 115200 bridge rate makes startup tolerant of resets and avoids losing time
+to failed baud switches. A matching ESP uses `GETPIPE` to send one 115200-baud
+command, then AudioMoth keeps the SD file open and streams repeated 115200-baud
+payload blocks. Each block is split into framed
 2048-byte chunks with offset, length, CRC32, and SD-read milliseconds. The ESP
 ACKs each good frame and NAKs bad frames so AudioMoth can resend before moving
 on. AudioMoth waits inside the same command for `NEXT <offset>` after each
 64 KiB block, so the ESP only advances after the server accepts the previous
 block. `GET` remains available as a compatibility command, but the matching
-production ESP32 upload path uses the ACKed `GETPIPE` pipe.
-
-For no-SD-card throughput diagnostics, the matching ESP can issue
-`TESTSTREAM <bytes> <baud>`. AudioMoth sends the same framed format as
-`GETSTREAM`, with predictable byte values and CRC32 per frame, so the ESP can
-measure the UART bottleneck before a real recording is available. The current
-production upload path uses ACKed 115200-baud frames so isolated byte errors are
-retried instead of failing the whole file.
+production ESP32 upload path uses the ACKed `GETPIPE` pipe. The dashboard and
+production ESP command handler expose only the stable 115200-baud transfer
+path.
 
 The bridge keeps the raw PA7 request-pin state separate from logical UART
 service availability. Startup uses a guarded upload window to avoid ESP32 and
@@ -93,7 +83,7 @@ The matching ESP32 sketch is in `Ash6414/Espmoth` under
 ## Build notes
 
 GitHub Actions overlays this repository onto AudioMoth-Project, applies the
-hardware UART and safe SD-service patches, builds `audiomoth.bin`, verifies
+safe SD-service patches, builds `audiomoth.bin`, verifies
 the bridge strings, and publishes the binary, hex, map, listing, and build
 metadata as one artifact.
 
